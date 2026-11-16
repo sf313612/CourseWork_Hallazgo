@@ -1,0 +1,47 @@
+﻿# PG-19 is stored at ../dataset/pg19/, outside this repository work tree. Git ignore rules cannot match paths outside the work tree.
+# Build artifacts and generated files
+/build/
+/cmake-build-*/
+/out/
+/bin/
+/obj/
+/CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+*.pdb
+/coverage/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+~$*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
