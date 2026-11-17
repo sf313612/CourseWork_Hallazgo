@@ -23,22 +23,22 @@ If no matching books are found, the system reports that there are no results.
 
 **Actor:** Project operator
 
-The operator starts indexing of the PG-19 corpus through the REST API. Hallazgo processes the documents and builds the inverted index in parallel using its own thread pool. The system reports the number of processed documents and indexing time.
+The operator starts indexing of the PG-19 corpus through the REST API with a specified thread count. Hallazgo immediately returns `202 Accepted` with a `job_id` and processes the documents in the background using its own thread pool. The operator can follow progress through `/ws/index`, which reports the job status and processed document count, with total count and percentage when available. `GET /api/stats` reports the current or most recent indexing status and relevant statistics, including indexing time.
 
-If the corpus cannot be read, the system reports an indexing error.
+If another indexing job is active, the request returns `409 Conflict`. If the corpus cannot be read, the system reports an indexing error.
 
 ## 3. Functional Requirements
 
 - **FR-1 — Corpus processing:** The system shall process English-language documents from PG-19 and report the number of processed documents.
 - **FR-2 — Inverted index:** The system shall use its own thread-safe inverted index and build it in parallel using a configurable, self-implemented thread pool.
-- **FR-3 — Search:** The system shall accept keyword queries and return matching books ranked by relevance.
-- **FR-4 — Query expansion:** The system shall use a locally running Ollama model to expand search queries before keyword retrieval.
+- **FR-3 — Search:** The system shall accept keyword queries and return matching books ranked by relevance. Search shall be unavailable while indexing is in progress, and the API shall report that the index is not ready.
+- **FR-4 — Query expansion:** The system shall use a locally running Ollama model for query expansion when available. If Ollama is unavailable, the system shall skip query expansion and perform keyword search using the original query.
 - **FR-5 — REST API:** The system shall provide:
   - `GET /api/health` — backend and Ollama status.
-  - `POST /api/index` — start indexing with a specified thread count.
-  - `POST /api/search` — search using a text query.
-  - `GET /api/stats` — indexing statistics.
-- **FR-6 — WebSocket:** The system shall provide `/ws/search` to stream search progress through the `query_expansion`, `keyword_search`, and `done` stages.
+  - `POST /api/index` — start indexing in the background with a specified thread count; immediately return `202 Accepted` with a `job_id`. Only one indexing job may run at a time; a request during an active job shall return `409 Conflict`.
+  - `POST /api/search` — search using a text query; while indexing is in progress, report that the index is not ready.
+  - `GET /api/stats` — current or most recent indexing status and relevant statistics.
+- **FR-6 — WebSocket:** The system shall provide `/ws/search` exclusively for search progress through the `query_expansion`, `keyword_search`, and `done` stages. It shall provide `/ws/index` for real-time indexing progress. Indexing progress messages shall report the job status and processed document count, with total count and percentage when available. Indexing states shall be `started`, `progress`, `completed`, and `error`.
 - **FR-7 — User interfaces:** The system shall provide a CLI and Web UI for searching books.
 
 ## 4. Non-functional Requirements
@@ -63,10 +63,11 @@ If the corpus cannot be read, the system reports an indexing error.
 The project is considered complete when:
 
 1. The application starts using Docker Compose and its health endpoint works.
-2. The selected corpus can be indexed, and the number of processed documents is reported.
+2. The selected corpus can be indexed, and the number of processed documents is reported. `POST /api/index` returns `202 Accepted` with a `job_id` immediately, and indexing proceeds in the background.
 3. Single-threaded and multi-threaded indexing produce equivalent searchable results.
 4. Keyword search returns relevant ranked results, with query expansion provided by Ollama.
-5. The REST API and WebSocket search updates work as specified.
-6. Both CLI and Web UI support searching.
-7. Automated tests verify the main functionality and concurrent operations.
-8. Performance experiments are completed and their results documented.
+5. The REST API and WebSocket endpoints work as specified: `/ws/search` streams only search-pipeline updates; `/ws/index` reports indexing status and document progress; and searches during indexing report that the index is not ready.
+6. A new indexing request during an active job returns `409 Conflict`, and `/api/stats` exposes the current or most recent indexing status and relevant statistics.
+7. Both CLI and Web UI support searching.
+8. Automated tests verify the main functionality and concurrent operations.
+9. Performance experiments are completed and their results documented.
