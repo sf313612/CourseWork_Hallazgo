@@ -56,3 +56,16 @@ target_include_directories(search_test PRIVATE
 
 # Додаємо Search до списку тестів CTest
 add_test(NAME search_test COMMAND search_test)
+
+
+# --- Thread Pool tests ---
+add_executable(thread_pool_test
+    tests/unit/thread_pool_test.cpp
+    src/core/thread_pool.cpp
+)
+
+target_include_directories(thread_pool_test PRIVATE
+    src/core
+)
+
+add_test(NAME thread_pool_test COMMAND thread_pool_test)
