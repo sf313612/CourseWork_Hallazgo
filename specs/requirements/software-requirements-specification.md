@@ -31,7 +31,7 @@ If another indexing job is active, the request returns `409 Conflict`. If the co
 
 - **FR-1 — Corpus processing:** The system shall process English-language documents from PG-19 and report the number of processed documents.
 - **FR-2 — Inverted index:** The system shall use its own thread-safe inverted index and build it in parallel using a configurable, self-implemented thread pool.
-- **FR-3 — Search:** The system shall accept keyword queries and return matching books ranked by relevance. Search shall be unavailable while indexing is in progress, and the API shall report that the index is not ready.
+- **FR-3 — Search:** The system shall accept keyword queries and return matching books ranked by relevance. For each query term, normalized term frequency is the term frequency divided by document length, and IDF is `log(total documents / documents containing the term)`. The score is the sum of TF-IDF scores across distinct query terms, and results are sorted by descending score. Search shall be unavailable while indexing is in progress, and the API shall report that the index is not ready.
 - **FR-4 — Query expansion:** The system shall use a locally running Ollama model for query expansion when available. If Ollama is unavailable, the system shall skip query expansion and perform keyword search using the original query.
 - **FR-5 — REST API:** The system shall provide:
   - `GET /api/health` — backend and Ollama status.
@@ -57,6 +57,10 @@ If another indexing job is active, the request returns `409 Conflict`. If the co
 - The project shall use its own configurable thread pool for parallel index construction.
 - The corpus shall contain at least 10,000 English-language documents and meet the minimum dataset size of 2 GB.
 - Dataset files shall remain outside the Git repository.
+
+### Current Implementation Status
+
+Day 3 implementation includes tokenization, an in-memory inverted index, and keyword search with TF-IDF ranking. Thread-safe index access and parallel indexing with a configurable, self-implemented thread pool remain requirements and are not yet implemented.
 
 ### Acceptance Criteria
 
