@@ -69,3 +69,21 @@ target_include_directories(thread_pool_test PRIVATE
 )
 
 add_test(NAME thread_pool_test COMMAND thread_pool_test)
+
+# --- Parallel Indexer tests ---
+add_executable(parallel_indexer_test
+    tests/unit/parallel_indexer_test.cpp
+    src/indexing/parallel_indexer.cpp
+    src/indexing/inverted_index.cpp
+    src/search/keyword_search.cpp
+    src/core/tokenizer.cpp
+    src/core/thread_pool.cpp
+)
+
+target_include_directories(parallel_indexer_test PRIVATE
+    src/indexing
+    src/search
+    src/core
+)
+
+add_test(NAME parallel_indexer_test COMMAND parallel_indexer_test)
