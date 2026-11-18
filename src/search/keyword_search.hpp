@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <utility>
+#include <mutex>
 #include "inverted_index.hpp"
 
 namespace Hallazgo_search {
@@ -27,6 +28,7 @@ namespace Hallazgo_search {
             const std::vector<std::string>& query
         );
     private:
+        std::mutex mutex;
         Hallazgo_inverted_index::InvertedIndex index;
         std::vector<std::pair<std::string, std::size_t>> document_lengths;
         std::size_t total_documents = 0;

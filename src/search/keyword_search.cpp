@@ -7,6 +7,7 @@
 namespace Hallazgo_search {
 
     void KeywordSearch::addDocument(const std::string& document_id, const std::vector<std::string>& tokens) {
+        std::lock_guard<std::mutex> lock(mutex);
         for (const auto& document : document_lengths) {
             if (document.first == document_id) {
                 return;
@@ -21,6 +22,7 @@ namespace Hallazgo_search {
     std::vector<SearchResult> KeywordSearch::search(
         const std::vector<std::string>& query
     ) {
+        std::lock_guard<std::mutex> lock(mutex);
         std::vector<SearchResult> results;
         std::unordered_set<std::string> scored_terms;
 

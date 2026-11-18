@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <mutex>
 
 namespace Hallazgo_inverted_index {
 
@@ -22,7 +23,8 @@ namespace Hallazgo_inverted_index {
         std::vector<Posting> find(const std::string& term);
 
         private:
-        std::vector<TermEntry> entries;   
+        std::vector<TermEntry> entries;
+        mutable std::mutex entries_mutex;   
     };
 
 }

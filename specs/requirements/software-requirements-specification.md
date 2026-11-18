@@ -60,7 +60,7 @@ If another indexing job is active, the request returns `409 Conflict`. If the co
 
 ### Current Implementation Status
 
-Day 3 implementation includes tokenization, an in-memory inverted index, and keyword search with TF-IDF ranking. Thread-safe index access and parallel indexing with a configurable, self-implemented thread pool remain requirements and are not yet implemented.
+Day 3 implementation includes tokenization, an in-memory inverted index, and keyword search with TF-IDF ranking. Thread-safe `InvertedIndex` and `KeywordSearch` access are implemented. Parallel document indexing with a configurable, self-implemented thread pool is not yet implemented.
 
 ### Acceptance Criteria
 

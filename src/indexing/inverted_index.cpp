@@ -3,6 +3,7 @@
 namespace Hallazgo_inverted_index {
 
     std::vector<Posting> InvertedIndex::find(const std::string& term) {
+        std::lock_guard<std::mutex> lock(entries_mutex);
         for (const TermEntry& entry : entries) {
             if (entry.term == term) {
                 return entry.postings;
@@ -16,6 +17,8 @@ namespace Hallazgo_inverted_index {
         const std::string& document_id,
         const std::vector<std::string>& tokens
     ) {
+        std::lock_guard<std::mutex> lock(entries_mutex);
+
         for (const std::string& token : tokens) {
 
             // 1. Шукаємо слово в індексі
