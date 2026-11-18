@@ -3,6 +3,9 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 
 #include "thread_pool.hpp"
 
@@ -113,6 +116,52 @@ bool testShutdownCanBeCalledTwice() {
     return true;
 }
 
+bool testMultipleWorkersExecuteTasksConcurrently() {
+    ThreadPool pool(2);
+
+    std::mutex mutex;
+    std::condition_variable condition;
+    int started = 0;
+    bool release = false;
+
+    auto task = [&]() {
+        std::unique_lock<std::mutex> lock(mutex);
+        ++started;
+        condition.notify_all();
+
+        condition.wait(lock, [&]() {
+            return release;
+        });
+
+        return true;
+    };
+
+    std::future<bool> first = pool.submit(task);
+    std::future<bool> second = pool.submit(task);
+
+    bool both_started = false;
+
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        both_started = condition.wait_for(
+            lock,
+            std::chrono::seconds(2),
+            [&]() { return started == 2; }
+        );
+
+        release = true;
+    }
+
+    condition.notify_all();
+
+    CHECK(first.get());
+    CHECK(second.get());
+    CHECK(both_started);
+
+    pool.shutdown();
+    return true;
+}
+
 struct TestCase {
     const char* name;
     bool (*run)();
@@ -127,6 +176,7 @@ int main(int argc, char* argv[]) {
         {"task exception propagates through future", testTaskExceptionPropagatesThroughFuture},
         {"worker continues after task exception", testWorkerContinuesAfterTaskException},
         {"shutdown can be called twice", testShutdownCanBeCalledTwice},
+        {"multiple workers execute tasks concurrently", testMultipleWorkersExecuteTasksConcurrently},
     };
 
     if (argc > 2) {
