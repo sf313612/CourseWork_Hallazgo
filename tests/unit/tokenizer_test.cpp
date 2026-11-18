@@ -1,8 +1,8 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include "tokenizer.hpp"
 
-std::vector<std::string> tokenize(const std::string& input);
 
 struct TestCase {
     const char* name;
@@ -36,11 +36,30 @@ bool testPunctuation() {
     return true;
 }
 
+bool testEmptyInput() {
+    CHECK(tokenize("").empty());
+    return true;
+}
+
+bool testWhitespaceOnlyInput() {
+    CHECK(tokenize("   \t\r\n").empty());
+    return true;
+}
+
+bool testTabsAndNewlines() {
+    const std::vector<std::string> expected = {"one", "two", "three"};
+    CHECK(tokenize("\tOne\nTWO\r\nthree\t") == expected);
+    return true;
+}
+
 int main() {
     const std::vector<TestCase> tests = {
         {"lowercase normalization", testLowercase},
         {"testTokenization", testTokenization},
         {"testPunctuation", testPunctuation},
+        {"empty input", testEmptyInput},
+        {"whitespace-only input", testWhitespaceOnlyInput},
+        {"tabs and newlines", testTabsAndNewlines},
     };
 
     int failures = 0;

@@ -59,6 +59,22 @@ bool testFindMissingWord() {
     return true;
 }
 
+bool testDuplicateDocumentIdMergesTerms() {
+    InvertedIndex index;
+    index.addDocument("doc1", {"apple", "apple"});
+    index.addDocument("doc1", {"apple", "banana"});
+
+    const std::vector<Posting> apple = index.find("apple");
+    const std::vector<Posting> banana = index.find("banana");
+    CHECK(apple.size() == 1);
+    CHECK(apple[0].document_id == "doc1");
+    CHECK(apple[0].term_frequency == 3);
+    CHECK(banana.size() == 1);
+    CHECK(banana[0].document_id == "doc1");
+    CHECK(banana[0].term_frequency == 1);
+    return true;
+}
+
 int main() {
     bool all_passed = true;
 
@@ -87,6 +103,13 @@ int main() {
         std::cout << "testFindMissingWord: PASSED\n";
     } else {
         std::cout << "testFindMissingWord: FAILED\n";
+        all_passed = false;
+    }
+
+    if (testDuplicateDocumentIdMergesTerms()) {
+        std::cout << "testDuplicateDocumentIdMergesTerms: PASSED\n";
+    } else {
+        std::cout << "testDuplicateDocumentIdMergesTerms: FAILED\n";
         all_passed = false;
     }
 
