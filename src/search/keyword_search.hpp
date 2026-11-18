@@ -4,6 +4,8 @@
 #include <vector>
 #include <utility>
 #include <mutex>
+#include <condition_variable>
+#include <stdexcept>
 #include "inverted_index.hpp"
 
 namespace Hallazgo_search {
@@ -17,6 +19,9 @@ namespace Hallazgo_search {
     // Пошук документів за ключовими словами
     class KeywordSearch {
     public:
+        void beginIndexing();
+        void finishIndexing();
+
         // Додає документ до пошукової системи
         void addDocument(
             const std::string& document_id,
@@ -31,7 +36,10 @@ namespace Hallazgo_search {
         std::mutex mutex;
         Hallazgo_inverted_index::InvertedIndex index;
         std::vector<std::pair<std::string, std::size_t>> document_lengths;
+        std::vector<std::string> pending_document_ids;
         std::size_t total_documents = 0;
+        std::condition_variable indexing_finished;
+        bool indexing_in_progress = false;
     };
 
 }

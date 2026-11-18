@@ -1,10 +1,18 @@
+
 #include "inverted_index.hpp"
+
+#include <functional>
 
 namespace Hallazgo_inverted_index {
 
     std::vector<Posting> InvertedIndex::find(const std::string& term) {
-        std::lock_guard<std::mutex> lock(entries_mutex);
-        for (const TermEntry& entry : entries) {
+        const std::size_t bucket_id =
+            std::hash<std::string>{}(term) % bucket_count;
+
+        Bucket& bucket = buckets[bucket_id];
+        std::lock_guard<std::mutex> lock(bucket.mutex);
+
+        for (const TermEntry& entry : bucket.entries) {
             if (entry.term == term) {
                 return entry.postings;
             }
@@ -17,26 +25,25 @@ namespace Hallazgo_inverted_index {
         const std::string& document_id,
         const std::vector<std::string>& tokens
     ) {
-        std::lock_guard<std::mutex> lock(entries_mutex);
-
         for (const std::string& token : tokens) {
+            const std::size_t bucket_id =
+                std::hash<std::string>{}(token) % bucket_count;
 
-            // 1. Шукаємо слово в індексі
+            Bucket& bucket = buckets[bucket_id];
+            std::lock_guard<std::mutex> lock(bucket.mutex);
+
             TermEntry* found_entry = nullptr;
 
-            for (TermEntry& entry : entries) {
+            for (TermEntry& entry : bucket.entries) {
                 if (entry.term == token) {
                     found_entry = &entry;
                     break;
                 }
             }
 
-            // 2. Якщо слово вже існує
             if (found_entry != nullptr) {
-
                 bool posting_found = false;
 
-                // Шукаємо документ у списку цього слова
                 for (Posting& posting : found_entry->postings) {
                     if (posting.document_id == document_id) {
                         posting.term_frequency++;
@@ -45,7 +52,6 @@ namespace Hallazgo_inverted_index {
                     }
                 }
 
-                // Якщо слова є, але документа ще немає
                 if (!posting_found) {
                     Posting new_posting;
                     new_posting.document_id = document_id;
@@ -53,9 +59,7 @@ namespace Hallazgo_inverted_index {
 
                     found_entry->postings.push_back(new_posting);
                 }
-
             } else {
-                // 3. Якщо слова ще немає — створюємо новий запис
                 TermEntry new_entry;
                 new_entry.term = token;
 
@@ -64,7 +68,7 @@ namespace Hallazgo_inverted_index {
                 new_posting.term_frequency = 1;
 
                 new_entry.postings.push_back(new_posting);
-                entries.push_back(new_entry);
+                bucket.entries.push_back(new_entry);
             }
         }
     }

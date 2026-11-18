@@ -6,23 +6,86 @@
 
 namespace Hallazgo_search {
 
-    void KeywordSearch::addDocument(const std::string& document_id, const std::vector<std::string>& tokens) {
+    void KeywordSearch::beginIndexing() {
         std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& document : document_lengths) {
-            if (document.first == document_id) {
-                return;
+
+        if (indexing_in_progress) {
+            throw std::logic_error("indexing is already in progress");
+        }
+
+        indexing_in_progress = true;
+    }
+
+    void KeywordSearch::finishIndexing() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            indexing_in_progress = false;
+        }
+
+        indexing_finished.notify_all();
+    }
+
+    void KeywordSearch::addDocument(
+        const std::string& document_id,
+        const std::vector<std::string>& tokens
+    ) {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+
+            for (const auto& document : document_lengths) {
+                if (document.first == document_id) {
+                    return;
+                }
+            }
+
+            for (const std::string& pending_id : pending_document_ids) {
+                if (pending_id == document_id) {
+                    return;
+                }
+            }
+
+            pending_document_ids.push_back(document_id);
+        }
+
+        try {
+            index.addDocument(document_id, tokens);
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(mutex);
+
+            for (auto it = pending_document_ids.begin();
+                it != pending_document_ids.end(); ++it) {
+                if (*it == document_id) {
+                    pending_document_ids.erase(it);
+                    break;
+                }
+            }
+
+            throw;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+
+            document_lengths.push_back({document_id, tokens.size()});
+            ++total_documents;
+
+            for (auto it = pending_document_ids.begin();
+                it != pending_document_ids.end(); ++it) {
+                if (*it == document_id) {
+                    pending_document_ids.erase(it);
+                    break;
+                }
             }
         }
-        index.addDocument(document_id, tokens);
-
-        document_lengths.push_back({document_id, tokens.size()});
-        ++total_documents;
     }
 
     std::vector<SearchResult> KeywordSearch::search(
         const std::vector<std::string>& query
     ) {
-        std::lock_guard<std::mutex> lock(mutex);
+        std::unique_lock<std::mutex> lock(mutex);
+        indexing_finished.wait(lock, [this] {
+            return !indexing_in_progress;
+        });
         std::vector<SearchResult> results;
         std::unordered_set<std::string> scored_terms;
 
