@@ -256,6 +256,47 @@ bool testSearchWhileDocumentsAreInserted() {
     return true;
 }
 
+bool testIndexReadinessAfterSuccessfulIndexing() {
+    KeywordSearch search;
+
+    if (search.isReady()) {
+        std::cerr << "Empty index should not be ready\n";
+        return false;
+    }
+
+    search.beginIndexing();
+
+    if (search.isReady()) {
+        std::cerr << "Index should not be ready during indexing\n";
+        return false;
+    }
+
+    search.addDocument("doc1", {"dragon", "magic"});
+    search.finishIndexing(true);
+
+    if (!search.isReady()) {
+        std::cerr << "Index should be ready after successful indexing\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool testIndexIsNotReadyAfterFailedIndexing() {
+    KeywordSearch search;
+
+    search.beginIndexing();
+    search.addDocument("doc1", {"dragon"});
+    search.finishIndexing(false);
+
+    if (search.isReady()) {
+        std::cerr << "Index should not be ready after failed indexing\n";
+        return false;
+    }
+
+    return true;
+}
+
 int main() {
     if (!testSearchReturnsMatchingDocuments()) {
         std::cerr << "Search test: FAILED\n";
@@ -291,6 +332,14 @@ int main() {
 
     if (!testSearchWhileDocumentsAreInserted()) {
         std::cerr << "Concurrent search and insertion test: FAILED\n";
+        return 1;
+    }
+
+    if (!testIndexReadinessAfterSuccessfulIndexing()) {
+        return 1;
+    }
+
+    if (!testIndexIsNotReadyAfterFailedIndexing()) {
         return 1;
     }
 

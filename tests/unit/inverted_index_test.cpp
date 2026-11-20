@@ -3,6 +3,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <functional>
 
 #include "inverted_index.hpp"
 
@@ -148,6 +149,34 @@ bool testConcurrentFindWhileInserting() {
     return true;
 }
 
+bool testHashCollisionsAndResizing() {
+    InvertedIndex index;
+    std::vector<std::string> terms;
+
+    // Generate many terms that belong to the same bucket.
+    for (std::size_t i = 0; terms.size() < 300; ++i) {
+        const std::string term = "term-" + std::to_string(i);
+
+        if (std::hash<std::string>{}(term) % 64 == 0) {
+            terms.push_back(term);
+        }
+    }
+
+    index.addDocumentUnique("doc1", terms);
+
+    for (const std::string& term : terms) {
+        const std::vector<Posting> results = index.find(term);
+
+        CHECK(results.size() == 1);
+        CHECK(results[0].document_id == "doc1");
+        CHECK(results[0].term_frequency == 1);
+    }
+
+    CHECK(index.find("missing-term").empty());
+
+    return true;
+}
+
 int main() {
     bool all_passed = true;
 
@@ -197,6 +226,13 @@ int main() {
         std::cout << "testConcurrentFindWhileInserting: PASSED\n";
     } else {
         std::cout << "testConcurrentFindWhileInserting: FAILED\n";
+        all_passed = false;
+    }
+
+        if (testHashCollisionsAndResizing()) {
+        std::cout << "testHashCollisionsAndResizing: PASSED\n";
+    } else {
+        std::cout << "testHashCollisionsAndResizing: FAILED\n";
         all_passed = false;
     }
 

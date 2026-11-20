@@ -6,6 +6,8 @@
 #include <chrono>
 #include <future>
 #include <stdexcept>
+#include <filesystem>
+#include <fstream>
 
 #include "parallel_indexer.hpp"
 #include "keyword_search.hpp"
@@ -103,6 +105,56 @@ bool testConcurrentIndexingIsRejected() {
     return true;
 }
 
+bool testIndexFiles() {
+    const std::string directory = "index_files_test";
+
+    std::filesystem::create_directories(directory);
+
+    {
+        std::ofstream(directory + "/10001.txt")
+            << "dragon castle magic";
+        std::ofstream(directory + "/10002.txt")
+            << "dragon mountain adventure";
+        std::ofstream(directory + "/10003.txt")
+            << "castle king kingdom";
+    }
+
+    KeywordSearch search;
+    ParallelIndexer indexer(search, 2);
+
+    indexer.indexFiles(directory);
+
+    const auto results = search.search({"dragon"});
+
+    CHECK(results.size() == 2);
+    CHECK(results[0].document_id == "10001" ||
+          results[0].document_id == "10002");
+
+    std::filesystem::remove_all(directory);
+    return true;
+}
+
+bool testIndexFilesEmptyDirectory() {
+    const std::string directory = "empty_index_test";
+    std::filesystem::create_directories(directory);
+
+    KeywordSearch search;
+    ParallelIndexer indexer(search, 2);
+
+    bool exception_thrown = false;
+
+    try {
+        indexer.indexFiles(directory);
+    } catch (const std::runtime_error&) {
+        exception_thrown = true;
+    }
+
+    std::filesystem::remove_all(directory);
+
+    CHECK(exception_thrown);
+    return true;
+}
+
 int main() {
     if (!testSameResultsWithDifferentWorkerCounts()) {
         return 1;
@@ -113,6 +165,14 @@ int main() {
     }
 
     if (!testConcurrentIndexingIsRejected()) {
+        return 1;
+    }
+
+    if (!testIndexFiles()) {
+        return 1;
+    }
+
+    if (!testIndexFilesEmptyDirectory()) {
         return 1;
     }
 

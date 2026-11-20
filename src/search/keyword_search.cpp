@@ -14,15 +14,22 @@ namespace Hallazgo_search {
         }
 
         indexing_in_progress = true;
+        index_ready = false;
     }
 
-    void KeywordSearch::finishIndexing() {
+    void KeywordSearch::finishIndexing(bool successful) {
         {
             std::lock_guard<std::mutex> lock(mutex);
             indexing_in_progress = false;
+            index_ready = successful && total_documents > 0;
         }
 
         indexing_finished.notify_all();
+    }
+
+    bool KeywordSearch::isReady() {
+        std::lock_guard<std::mutex> lock(mutex);
+        return index_ready && !indexing_in_progress;
     }
 
     void KeywordSearch::addDocument(
@@ -77,6 +84,17 @@ namespace Hallazgo_search {
                 }
             }
         }
+    }
+
+    void KeywordSearch::addDocumentUnique(
+        const std::string& document_id,
+        const std::vector<std::string>& tokens
+    ) {
+        index.addDocumentUnique(document_id, tokens);
+
+        std::lock_guard<std::mutex> lock(mutex);
+        document_lengths.push_back({document_id, tokens.size()});
+        ++total_documents;
     }
 
     std::vector<SearchResult> KeywordSearch::search(
@@ -139,13 +157,14 @@ namespace Hallazgo_search {
             }
         }
 
-        std::sort(
-            results.begin(),
-            results.end(),
-            [](const SearchResult& a, const SearchResult& b) {
+        std::sort(results.begin(), results.end(),
+        [](const SearchResult& a, const SearchResult& b) {
+            if (a.score != b.score) {
                 return a.score > b.score;
             }
-        );
+
+            return a.document_id < b.document_id;
+        });
 
         return results;
     }

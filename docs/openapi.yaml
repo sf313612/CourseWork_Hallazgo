@@ -1,8 +1,8 @@
-openapi: 3.1.2
+openapi: 3.1.0
+
 info:
   title: Hallazgo API
-  version: draft
-  description: HTTP API for Hallazgo literary search and indexing.
+  version: 1.0.0
 
 paths:
   /api/health:

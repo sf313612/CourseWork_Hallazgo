@@ -20,10 +20,17 @@ namespace Hallazgo_search {
     class KeywordSearch {
     public:
         void beginIndexing();
-        void finishIndexing();
+        bool isReady();
+        void finishIndexing(bool successful = true);
 
         // Додає документ до пошукової системи
         void addDocument(
+            const std::string& document_id,
+            const std::vector<std::string>& tokens
+        );
+
+        // Додає документ до пошукової системи, якщо він ще не доданий
+        void addDocumentUnique(
             const std::string& document_id,
             const std::vector<std::string>& tokens
         );
@@ -40,6 +47,7 @@ namespace Hallazgo_search {
         std::size_t total_documents = 0;
         std::condition_variable indexing_finished;
         bool indexing_in_progress = false;
+        bool index_ready = false;
     };
 
 }

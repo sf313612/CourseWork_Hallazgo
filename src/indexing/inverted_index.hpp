@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include <string>
@@ -26,6 +25,11 @@ namespace Hallazgo_inverted_index {
             const std::vector<std::string>& tokens
         );
 
+        void addDocumentUnique(
+            const std::string& document_id,
+            const std::vector<std::string>& tokens
+        );
+
         std::vector<Posting> find(const std::string& term);
 
     private:
@@ -33,8 +37,27 @@ namespace Hallazgo_inverted_index {
 
         struct Bucket {
             std::vector<TermEntry> entries;
+            std::vector<std::size_t> lookup_slots;
             std::mutex mutex;
         };
+
+        static bool findEntryIndex(
+            const Bucket& bucket,
+            const std::string& term,
+            std::size_t& index
+        );
+
+        static void rebuildLookup(
+            Bucket& bucket,
+            std::size_t new_capacity
+        );
+
+        static void ensureLookupCapacity(Bucket& bucket);
+
+        static void insertLookup(
+            Bucket& bucket,
+            std::size_t entry_index
+        );
 
         std::array<Bucket, bucket_count> buckets;
     };

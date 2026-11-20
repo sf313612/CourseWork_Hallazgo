@@ -2,6 +2,9 @@
 # Мінімальна версія CMake та назва проєкту
 cmake_minimum_required(VERSION 3.20)
 project(HallazgoTests LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Дозволяємо запуск тестів через CTest
 enable_testing()
@@ -87,3 +90,40 @@ target_include_directories(parallel_indexer_test PRIVATE
 )
 
 add_test(NAME parallel_indexer_test COMMAND parallel_indexer_test)
+
+
+# --- Metadata Store tests ---
+add_executable(metadata_store_test
+    tests/unit/metadata_store_test.cpp
+    src/api/metadata_store.cpp
+)
+
+target_include_directories(metadata_store_test PRIVATE
+    src/api
+)
+
+add_test(NAME metadata_store_test COMMAND metadata_store_test)
+
+# --- API server ---
+find_package(Crow CONFIG REQUIRED)
+
+add_executable(hallazgo_api
+    src/api/main.cpp
+    src/api/routes.cpp
+    src/api/metadata_store.cpp
+    src/core/thread_pool.cpp
+    src/core/tokenizer.cpp
+    src/indexing/inverted_index.cpp
+    src/indexing/parallel_indexer.cpp
+    src/search/keyword_search.cpp
+)
+
+target_include_directories(hallazgo_api PRIVATE
+    src/api
+    src/core
+    src/indexing
+    src/search
+)
+
+target_link_libraries(hallazgo_api PRIVATE Crow::Crow)
+target_compile_definitions(hallazgo_api PRIVATE _WIN32_WINNT=0x0A00)
