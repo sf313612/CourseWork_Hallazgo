@@ -39,10 +39,8 @@ namespace Hallazgo_search {
         {
             std::lock_guard<std::mutex> lock(mutex);
 
-            for (const auto& document : document_lengths) {
-                if (document.first == document_id) {
-                    return;
-                }
+            if (document_lengths_map.find(document_id) != document_lengths_map.end()) {
+                return;
             }
 
             for (const std::string& pending_id : pending_document_ids) {
@@ -74,6 +72,7 @@ namespace Hallazgo_search {
             std::lock_guard<std::mutex> lock(mutex);
 
             document_lengths.push_back({document_id, tokens.size()});
+            document_lengths_map[document_id] = tokens.size();
             ++total_documents;
 
             for (auto it = pending_document_ids.begin();
@@ -94,6 +93,7 @@ namespace Hallazgo_search {
 
         std::lock_guard<std::mutex> lock(mutex);
         document_lengths.push_back({document_id, tokens.size()});
+        document_lengths_map[document_id] = tokens.size();
         ++total_documents;
     }
 
@@ -104,7 +104,7 @@ namespace Hallazgo_search {
         indexing_finished.wait(lock, [this] {
             return !indexing_in_progress;
         });
-        std::vector<SearchResult> results;
+        std::unordered_map<std::string, double> score_map;
         std::unordered_set<std::string> scored_terms;
 
         for (const std::string& term : query) {
@@ -122,39 +122,26 @@ namespace Hallazgo_search {
             );
 
             for (const auto& posting : postings) {
-                auto result = std::find_if(
-                    results.begin(),
-                    results.end(),
-                    [&](const SearchResult& item) {
-                        return item.document_id == posting.document_id;
-                    }
-                );
-
-                auto document = std::find_if(
-                    document_lengths.begin(),
-                    document_lengths.end(),
-                    [&](const auto& item) {
-                        return item.first == posting.document_id;
-                    }
-                );
-
-                if (document == document_lengths.end() ||
-                    document->second == 0) {
+                auto doc_it = document_lengths_map.find(posting.document_id);
+                if (doc_it == document_lengths_map.end() ||
+                    doc_it->second == 0) {
                     continue;
                 }
 
                 const double tf =
                     static_cast<double>(posting.term_frequency) /
-                    document->second;
+                    doc_it->second;
 
                 const double term_score = tf * idf;
 
-                if (result == results.end()) {
-                    results.push_back({posting.document_id, term_score});
-                } else {
-                    result->score += term_score;
-                }
+                score_map[posting.document_id] += term_score;
             }
+        }
+
+        std::vector<SearchResult> results;
+        results.reserve(score_map.size());
+        for (const auto& pair : score_map) {
+            results.push_back({pair.first, pair.second});
         }
 
         std::sort(results.begin(), results.end(),

@@ -282,6 +282,57 @@ bool testIndexReadinessAfterSuccessfulIndexing() {
     return true;
 }
 
+bool testLargeScaleKeywordSearchPerformanceAndRanking() {
+    KeywordSearch search;
+    const std::size_t doc_count = 500;
+
+    // Create many documents sharing a common term ("shipwrecked")
+    // and additional matching/non-matching terms.
+    for (std::size_t i = 0; i < doc_count; ++i) {
+        std::string doc_id = "doc_" + std::to_string(i);
+        std::vector<std::string> tokens = {"shipwrecked", "sailor"};
+        // Add varying extra terms to test ranking & deterministic ordering
+        for (std::size_t j = 0; j < (i % 5); ++j) {
+            tokens.push_back("extra" + std::to_string(j));
+        }
+        search.addDocument(doc_id, tokens);
+    }
+
+    // Add some documents without the common term
+    search.addDocument("doc_other_1", {"ocean", "wave"});
+    search.addDocument("doc_other_2", {"mountain", "climb"});
+
+    // Search with multiple terms including common and additional terms
+    auto results = search.search({"shipwrecked", "sailor"});
+
+    if (results.empty()) {
+        std::cerr << "Expected non-empty results for large scale search\n";
+        return false;
+    }
+
+    // Verify all expected documents containing "shipwrecked" or "sailor" are returned
+    if (results.size() != doc_count) {
+        std::cerr << "Expected " << doc_count << " matching documents, got " << results.size() << "\n";
+        return false;
+    }
+
+    // Verify ranking (sorted by score descending, then document ID ascending)
+    for (std::size_t i = 0; i < results.size() - 1; ++i) {
+        if (results[i].score < results[i + 1].score) {
+            std::cerr << "Results not sorted by score descending at index " << i << "\n";
+            return false;
+        }
+        if (results[i].score == results[i + 1].score) {
+            if (results[i].document_id >= results[i + 1].document_id) {
+                std::cerr << "Results with equal score not sorted by document ID ascending\n";
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 bool testIndexIsNotReadyAfterFailedIndexing() {
     KeywordSearch search;
 
@@ -336,6 +387,11 @@ int main() {
     }
 
     if (!testIndexReadinessAfterSuccessfulIndexing()) {
+        return 1;
+    }
+
+    if (!testLargeScaleKeywordSearchPerformanceAndRanking()) {
+        std::cerr << "Large scale keyword search test: FAILED\n";
         return 1;
     }
 
