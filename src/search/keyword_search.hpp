@@ -47,6 +47,7 @@ namespace Hallazgo_search {
         std::unordered_map<std::string, std::size_t> document_lengths_map;
         std::vector<std::string> pending_document_ids;
         std::size_t total_documents = 0;
+        std::size_t total_document_length = 0;
         std::condition_variable indexing_finished;
         bool indexing_in_progress = false;
         bool index_ready = false;

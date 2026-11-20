@@ -69,6 +69,83 @@ bool testMoreRelevantDocumentGetsHigherScore() {
     return true;
 }
 
+
+bool testBM25DocumentLengthNormalization() {
+    KeywordSearch search;
+
+    search.addDocument("short", {"dragon", "magic"});
+
+    search.addDocument("long", {
+        "dragon", "magic",
+        "castle", "king", "forest", "sword",
+        "battle", "wizard", "stone", "river"
+    });
+
+    const auto results = search.search({"dragon"});
+
+    if (results.size() != 2) {
+        std::cerr << "Expected 2 matching documents\n";
+        return false;
+    }
+
+    if (results[0].document_id != "short") {
+        std::cerr << "Expected shorter document to rank higher\n";
+        return false;
+    }
+
+    if (results[0].score <= results[1].score) {
+        std::cerr << "Document length normalization failed\n";
+        return false;
+    }
+
+    return true;
+}
+
+
+bool testBM25TermFrequencySaturation() {
+    KeywordSearch search;
+
+    search.addDocument("one", {
+        "dragon", "a1", "a2", "a3", "a4", "a5", "a6", "a7"
+    });
+
+    search.addDocument("two", {
+        "dragon", "dragon", "b1", "b2", "b3", "b4", "b5", "b6"
+    });
+
+    search.addDocument("four", {
+        "dragon", "dragon", "dragon", "dragon",
+        "c1", "c2", "c3", "c4"
+    });
+
+    const auto results = search.search({"dragon"});
+
+    if (results.size() != 3) {
+        std::cerr << "Expected 3 matching documents\n";
+        return false;
+    }
+
+    if (results[0].document_id != "four" ||
+        results[1].document_id != "two" ||
+        results[2].document_id != "one") {
+        std::cerr << "Term frequency ranking is incorrect\n";
+        return false;
+    }
+
+    const double first_increase =
+        results[1].score - results[2].score;
+
+    const double second_increase =
+        results[0].score - results[1].score;
+
+    if (first_increase <= second_increase) {
+        std::cerr << "Expected diminishing score increase for repeated terms\n";
+        return false;
+    }
+
+    return true;
+}
+
 bool testEmptyQueryReturnsNoResults() {
     KeywordSearch search;
 
@@ -256,6 +333,82 @@ bool testSearchWhileDocumentsAreInserted() {
     return true;
 }
 
+
+bool testAddDocumentUniqueRepeatedInsertion() {
+    KeywordSearch search;
+
+    search.addDocumentUnique("doc1", {"dragon", "magic"});
+    search.addDocumentUnique("doc1", {"castle", "king"});
+
+    const auto original_results = search.search({"dragon", "magic"});
+    const auto duplicate_results = search.search({"castle", "king"});
+
+    if (original_results.size() != 1 ||
+        original_results[0].document_id != "doc1") {
+        std::cerr << "Original document was not preserved\n";
+        return false;
+    }
+
+    if (!duplicate_results.empty()) {
+        std::cerr << "Repeated insertion added new terms to the document\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool testConcurrentAddDocumentUnique() {
+    KeywordSearch search;
+
+    const std::size_t worker_count = 4;
+    const std::size_t documents_per_worker = 25;
+    std::vector<std::thread> workers;
+
+    for (std::size_t worker_id = 0; worker_id < worker_count; ++worker_id) {
+        workers.emplace_back([worker_id, documents_per_worker, &search] {
+            for (std::size_t i = 0; i < documents_per_worker; ++i) {
+                const std::string id =
+                    "unique-worker-" + std::to_string(worker_id) +
+                    "-doc-" + std::to_string(i);
+
+                const std::string term =
+                    "unique-term-" + std::to_string(worker_id) +
+                    "-" + std::to_string(i);
+
+                search.addDocumentUnique(id, {"shared", term});
+            }
+        });
+    }
+
+    for (std::thread& worker : workers) {
+        worker.join();
+    }
+
+    const auto results = search.search({"shared"});
+
+    if (results.size() != worker_count * documents_per_worker) {
+        std::cerr << "Unexpected document count after concurrent unique insertion\n";
+        return false;
+    }
+
+    for (std::size_t worker_id = 0; worker_id < worker_count; ++worker_id) {
+        for (std::size_t i = 0; i < documents_per_worker; ++i) {
+            const std::string term =
+                "unique-term-" + std::to_string(worker_id) +
+                "-" + std::to_string(i);
+
+            const auto document_results = search.search({term});
+
+            if (document_results.size() != 1) {
+                std::cerr << "Document missing after concurrent unique insertion\n";
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
 bool testIndexReadinessAfterSuccessfulIndexing() {
     KeywordSearch search;
 
@@ -333,6 +486,58 @@ bool testLargeScaleKeywordSearchPerformanceAndRanking() {
     return true;
 }
 
+
+bool testStopWordsAreIgnored() {
+    KeywordSearch search;
+
+    search.addDocument("doc1", {"shipwrecked", "sailor"});
+    search.addDocument("doc2", {"home", "years"});
+    search.addDocument("doc3", {"the", "and", "a"});
+
+    auto results = search.search({"the", "shipwrecked", "and", "sailor"});
+
+    if (results.size() != 1 || results[0].document_id != "doc1") {
+        std::cerr << "Stop words were not ignored correctly\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool testStopWordsOnlyQueryReturnsNoResults() {
+    KeywordSearch search;
+
+    search.addDocument("doc1", {"shipwrecked", "sailor"});
+    search.addDocument("doc2", {"home", "years"});
+
+    auto results = search.search({"the", "and", "a", "after"});
+
+    if (!results.empty()) {
+        std::cerr << "Stop-word-only query should return no results\n";
+        return false;
+    }
+
+    return true;
+}
+
+bool testStopWordsPreserveOrSearch() {
+    KeywordSearch search;
+
+    search.addDocument("doc1", {"shipwrecked"});
+    search.addDocument("doc2", {"sailor"});
+    search.addDocument("doc3", {"mountain"});
+
+    auto results = search.search({"the", "shipwrecked", "sailor"});
+
+    if (results.size() != 2) {
+        std::cerr << "OR search behavior changed after stop-word filtering\n";
+        return false;
+    }
+
+    return true;
+}
+
+
 bool testIndexIsNotReadyAfterFailedIndexing() {
     KeywordSearch search;
 
@@ -348,6 +553,31 @@ bool testIndexIsNotReadyAfterFailedIndexing() {
     return true;
 }
 
+bool testDuplicateQueryTermsDoNotChangeScore() {
+    KeywordSearch search;
+
+    search.addDocument("doc1", {"shipwrecked", "sailor"});
+    search.addDocument("doc2", {"ocean", "waves"});
+
+    auto single_term_results = search.search({"shipwrecked"});
+    auto duplicate_term_results = search.search({"shipwrecked", "shipwrecked"});
+
+    if (single_term_results.size() != duplicate_term_results.size()) {
+        std::cerr << "Duplicate query terms changed the number of results\n";
+        return false;
+    }
+
+    for (std::size_t i = 0; i < single_term_results.size(); ++i) {
+        if (single_term_results[i].document_id != duplicate_term_results[i].document_id ||
+            single_term_results[i].score != duplicate_term_results[i].score) {
+            std::cerr << "Duplicate query terms changed document ranking or score\n";
+            return false;
+        }
+    }
+
+    return true;
+}
+
 int main() {
     if (!testSearchReturnsMatchingDocuments()) {
         std::cerr << "Search test: FAILED\n";
@@ -355,7 +585,17 @@ int main() {
     }
 
     if (!testMoreRelevantDocumentGetsHigherScore()) {
-        std::cerr << "TF-IDF test: FAILED\n";
+        std::cerr << "BM25 ranking test: FAILED\n";
+        return 1;
+    }
+
+    if (!testBM25DocumentLengthNormalization()) {
+    std::cerr << "BM25 document length normalization test: FAILED\n";
+        return 1;
+    }
+
+    if (!testBM25TermFrequencySaturation()) {
+        std::cerr << "BM25 term frequency saturation test: FAILED\n";
         return 1;
     }
 
@@ -395,10 +635,36 @@ int main() {
         return 1;
     }
 
+    if (!testStopWordsAreIgnored()) {
+        return 1;
+    }
+
+    if (!testStopWordsOnlyQueryReturnsNoResults()) {
+        return 1;
+    }
+
+    if (!testStopWordsPreserveOrSearch()) {
+        return 1;
+    }
+
     if (!testIndexIsNotReadyAfterFailedIndexing()) {
+        return 1;
+    }
+
+    if (!testAddDocumentUniqueRepeatedInsertion()) {
+        std::cerr << "Repeated unique insertion test: FAILED\n";
+        return 1;
+    }
+
+    if (!testConcurrentAddDocumentUnique()) {
+        std::cerr << "Concurrent unique insertion test: FAILED\n";
+        return 1;
+    }
+
+    if (!testDuplicateQueryTermsDoNotChangeScore()) {
         return 1;
     }
 
     std::cout << "Search test: PASSED\n";
     return 0;
-}
+} 
