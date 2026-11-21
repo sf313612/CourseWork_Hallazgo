@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <algorithm>
+#include <utility>
 
 namespace Hallazgo_inverted_index {
 
@@ -101,17 +102,29 @@ namespace Hallazgo_inverted_index {
         const std::string& document_id,
         const std::vector<std::string>& tokens
     ) {
-        std::vector<std::string> sorted_tokens = tokens;
-        std::sort(sorted_tokens.begin(), sorted_tokens.end());
+        std::vector<const std::string*> sorted_tokens;
+        sorted_tokens.reserve(tokens.size());
+
+        for (const std::string& token : tokens) {
+            sorted_tokens.push_back(&token);
+        }
+
+        std::sort(
+            sorted_tokens.begin(),
+            sorted_tokens.end(),
+            [](const std::string* a, const std::string* b) {
+                return *a < *b;
+            }
+        );
 
         std::size_t i = 0;
 
         while (i < sorted_tokens.size()) {
-            const std::string& token = sorted_tokens[i];
+            const std::string& token = *sorted_tokens[i];
             std::size_t frequency = 1;
 
             while (i + frequency < sorted_tokens.size() &&
-                sorted_tokens[i + frequency] == token) {
+                *sorted_tokens[i + frequency] == token) {
                 ++frequency;
             }
 
@@ -152,7 +165,7 @@ namespace Hallazgo_inverted_index {
                     frequency
                 });
 
-                bucket.entries.push_back(new_entry);
+                bucket.entries.push_back(std::move(new_entry));
                 insertLookup(bucket, bucket.entries.size() - 1);
             }
 
@@ -164,17 +177,29 @@ namespace Hallazgo_inverted_index {
         const std::string& document_id,
         const std::vector<std::string>& tokens
     ) {
-        std::vector<std::string> sorted_tokens = tokens;
-        std::sort(sorted_tokens.begin(), sorted_tokens.end());
+        std::vector<const std::string*> sorted_tokens;
+        sorted_tokens.reserve(tokens.size());
+
+        for (const std::string& token : tokens) {
+            sorted_tokens.push_back(&token);
+        }
+
+        std::sort(
+            sorted_tokens.begin(),
+            sorted_tokens.end(),
+            [](const std::string* a, const std::string* b) {
+                return *a < *b;
+            }
+        );
 
         std::size_t i = 0;
 
         while (i < sorted_tokens.size()) {
-            const std::string& token = sorted_tokens[i];
+            const std::string& token = *sorted_tokens[i];
             std::size_t frequency = 1;
 
             while (i + frequency < sorted_tokens.size() &&
-                sorted_tokens[i + frequency] == token) {
+                *sorted_tokens[i + frequency] == token) {
                 ++frequency;
             }
 
@@ -187,7 +212,9 @@ namespace Hallazgo_inverted_index {
             std::size_t entry_index;
 
             if (findEntryIndex(bucket, token, entry_index)) {
-                bucket.entries[entry_index].postings.push_back({
+                TermEntry& entry = bucket.entries[entry_index];
+
+                entry.postings.push_back({
                     document_id,
                     frequency
                 });
@@ -201,7 +228,7 @@ namespace Hallazgo_inverted_index {
                     frequency
                 });
 
-                bucket.entries.push_back(new_entry);
+                bucket.entries.push_back(std::move(new_entry));
                 insertLookup(bucket, bucket.entries.size() - 1);
             }
 

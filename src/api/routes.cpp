@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <iostream>
+#include <algorithm>
 
 crow::response makeErrorResponse(
     int status,
@@ -279,7 +280,11 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
         crow::json::wvalue response;
         crow::json::wvalue::list results;
 
-        for (const auto& item : search_results) {
+        const std::size_t result_limit = 10;
+        const std::size_t result_count = std::min(search_results.size(), result_limit);
+
+        for (std::size_t i = 0; i < result_count; ++i) {
+            const auto& item = search_results[i]; 
             crow::json::wvalue result_item;
 
             result_item["document_id"] = item.document_id;
