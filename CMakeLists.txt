@@ -106,6 +106,7 @@ add_test(NAME metadata_store_test COMMAND metadata_store_test)
 
 # --- API server ---
 find_package(Crow CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 
 add_executable(hallazgo_api
     src/api/main.cpp
@@ -116,6 +117,7 @@ add_executable(hallazgo_api
     src/indexing/inverted_index.cpp
     src/indexing/parallel_indexer.cpp
     src/search/keyword_search.cpp
+    src/api/ollama_client.cpp
 )
 
 target_include_directories(hallazgo_api PRIVATE
@@ -125,5 +127,5 @@ target_include_directories(hallazgo_api PRIVATE
     src/search
 )
 
-target_link_libraries(hallazgo_api PRIVATE Crow::Crow)
+target_link_libraries(hallazgo_api PRIVATE Crow::Crow httplib::httplib)
 target_compile_definitions(hallazgo_api PRIVATE _WIN32_WINNT=0x0A00)

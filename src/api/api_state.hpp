@@ -11,6 +11,7 @@
 #include "keyword_search.hpp"
 #include "metadata_store.hpp"
 #include "parallel_indexer.hpp"
+#include "ollama_client.hpp"
 
 struct ApiState {
     explicit ApiState(const std::string& directory)
@@ -24,10 +25,13 @@ struct ApiState {
 
     Hallazgo_search::KeywordSearch search;
     Hallazgo_api::MetadataStore metadata;
+    
+    Hallazgo_api::OllamaClient ollama;
 
     std::string dataset_directory;
 
     std::mutex mutex;
+    std::mutex indexing_start_mutex;
     std::thread indexing_thread;
     std::unique_ptr<Hallazgo_indexing::ParallelIndexer> indexer;
 
