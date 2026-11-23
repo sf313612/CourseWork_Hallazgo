@@ -95,13 +95,14 @@ main {
 .hero-subtitle {
     position: absolute;
     z-index: 1;
-    top: 30px;
-    left: 40px;
+    bottom: 30px;
+    left: 20px;
+    right: 20px;
     margin: 0;
     font-size: 17px;
     letter-spacing: 1px;
     color: rgba(255, 255, 255, 0.92);
-    text-align: left;
+    text-align: center;
 }
 
 .script-font {
@@ -412,6 +413,41 @@ main {
 
 /* INDEX STATUS BAR */
 
+.quick-queries {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.quick-queries-label {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.quick-query {
+    padding: 7px 12px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.quick-query:hover {
+    background: var(--surface);
+    border-color: var(--terracotta);
+}
+
+#compact-search-slot .quick-queries {
+    display: none;
+}
+
 .index-status-bar {
     display: flex;
     align-items: center;
@@ -525,6 +561,47 @@ main {
 
 #status:empty {
     display: none;
+}
+
+.expansion-toggle {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.expanded-terms {
+    margin-top: 12px;
+    padding: 14px 18px;
+    border-left: 2px solid var(--terracotta);
+    border-radius: 0 4px 4px 0;
+    background: var(--surface);
+}
+
+.expanded-terms[hidden] {
+    display: none;
+}
+
+.expanded-terms p {
+    margin: 0 0 8px;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.expanded-terms ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.expanded-terms li {
+    padding: 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    color: var(--muted);
+    font-size: 12px;
 }
 
 .result-card {
@@ -738,10 +815,12 @@ footer span:first-child {
     }
 
     .hero-subtitle {
-        top: 22px;
-        left: 20px;
-        right: 20px;
+        top: auto;
+        bottom: 20px;
+        left: 14px;
+        right: 14px;
         font-size: 13px;
+        text-align: center;
     }
 
     .hero h1 {

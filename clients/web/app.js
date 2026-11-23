@@ -2,6 +2,7 @@ const form = document.getElementById("search-form");
 const queryInput = document.getElementById("query");
 const searchButton = document.getElementById("search-button");
 const clearQueryButton = document.getElementById("clear-query-button");
+const quickQueries = document.getElementById("quick-queries");
 
 const statusElement = document.getElementById("status");
 const resultsContainer = document.getElementById("results");
@@ -540,9 +541,36 @@ form.addEventListener("submit", async (event) => {
             resultsContainer.append(createBookCard(item, index));
         });
 
-        if (data.query_expansion_used) {
-            statusElement.textContent =
-                `Query expanded · ${data.added_terms_count || 0} additional terms`;
+        if (data.query_expansion_used && data.added_terms?.length > 0) {
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "text-button expansion-toggle";
+            toggle.textContent =
+                `Query expanded · ${data.added_terms.length} additional terms`;
+
+            const termsList = document.createElement("div");
+            termsList.className = "expanded-terms";
+            termsList.hidden = true;
+
+            const termsHeading = document.createElement("p");
+            termsHeading.textContent = "Additional search terms:";
+            termsList.append(termsHeading);
+
+            const terms = document.createElement("ul");
+
+            data.added_terms.forEach(term => {
+                const item = document.createElement("li");
+                item.textContent = term;
+                terms.append(item);
+            });
+
+            termsList.append(terms);
+
+            toggle.addEventListener("click", () => {
+                termsList.hidden = !termsList.hidden;
+            });
+
+            statusElement.replaceChildren(toggle, termsList);
         } else {
             statusElement.textContent = "Search completed.";
         }
@@ -577,6 +605,18 @@ homeButton.addEventListener("click", showHome);
 clearQueryButton.addEventListener("click", () => {
     queryInput.value = "";
     clearQueryButton.hidden = true;
+    queryInput.focus();
+});
+
+quickQueries.addEventListener("click", (event) => {
+    const button = event.target.closest(".quick-query");
+
+    if (!button) {
+        return;
+    }
+
+    queryInput.value = button.dataset.query;
+    clearQueryButton.hidden = false;
     queryInput.focus();
 });
 

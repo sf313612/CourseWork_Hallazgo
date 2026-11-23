@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#e5e1d9">
-    <title>Literary Search Hallazgo</title>
+    <title>Hallazgo Search</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -95,6 +95,25 @@
                     <button type="submit" id="search-button">Search</button>
                 </form>
 
+                <div class="quick-queries" id="quick-queries">
+                    <span class="quick-queries-label">Try:</span>
+
+                    <button type="button" class="quick-query"
+                        data-query="A mysterious island and a hidden treasure">
+                        A mysterious island and a hidden treasure
+                    </button>
+
+                    <button type="button" class="quick-query"
+                        data-query="A young woman travels through Europe">
+                        A young woman travels through Europe
+                    </button>
+
+                    <button type="button" class="quick-query"
+                        data-query="A detective investigates a strange disappearance">
+                        A detective investigates a strange disappearance
+                    </button>
+                </div>
+
                 <div class="index-status-bar" id="index-status-bar">
                     <span class="ready-indicator"></span>
                     <span id="ready-status-text">Index ready</span>
@@ -112,7 +131,7 @@
                 <span id="result-count"></span>
             </div>
 
-            <p id="status" role="status" aria-live="polite"></p>
+           <div id="status" role="status" aria-live="polite"></div>
             <div id="results"></div>
         </section>
     </main>

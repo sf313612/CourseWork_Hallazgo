@@ -152,6 +152,17 @@ SearchExecution performSearch(
     execution.response["results"] = std::move(results);
     execution.response["query_expansion_time_ms"] =
         static_cast<std::uint64_t>(expansion_time_ms);
+
+    crow::json::wvalue::list added_terms;
+
+    for (const auto& term : expansion.tokens) {
+        if (std::find(tokens.begin(), tokens.end(), term) == tokens.end()) {
+            added_terms.push_back(term);
+        }
+    }
+
+    execution.response["added_terms"] = std::move(added_terms);
+
     execution.response["search_time_ms"] =
         static_cast<std::uint64_t>(search_time_ms);
     execution.response["original_terms_count"] = tokens.size();
