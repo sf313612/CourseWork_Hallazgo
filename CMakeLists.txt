@@ -128,4 +128,16 @@ target_include_directories(hallazgo_api PRIVATE
 )
 
 target_link_libraries(hallazgo_api PRIVATE Crow::Crow httplib::httplib)
-target_compile_definitions(hallazgo_api PRIVATE _WIN32_WINNT=0x0A00)
+if(WIN32)
+    target_compile_definitions(hallazgo_api PRIVATE _WIN32_WINNT=0x0A00)
+endif()
+
+# --- CLI client ---
+add_executable(hallazgo_cli
+    clients/cli/main.cpp
+)
+
+target_link_libraries(hallazgo_cli PRIVATE
+    Crow::Crow
+    httplib::httplib
+)
