@@ -3,14 +3,15 @@
 #include <string>
 #include <vector>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <array>
 
 namespace Hallazgo_inverted_index {
 
     struct Posting {
-        std::string document_id;
-        std::size_t term_frequency;
+        std::uint32_t doc_id;
+        std::uint32_t term_frequency;
     };
 
     struct TermEntry {
@@ -21,12 +22,12 @@ namespace Hallazgo_inverted_index {
     class InvertedIndex {
     public:
         void addDocument(
-            const std::string& document_id,
+            std::uint32_t doc_id,
             const std::vector<std::string>& tokens
         );
 
         void addDocumentUnique(
-            const std::string& document_id,
+            std::uint32_t doc_id,
             const std::vector<std::string>& tokens
         );
 

@@ -1,0 +1,7 @@
+.git
+.gitignore
+build/
+build-crow/
+vcpkg_installed/
+.vs/
+.vscode/

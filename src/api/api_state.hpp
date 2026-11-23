@@ -15,7 +15,15 @@
 
 struct ApiState {
     explicit ApiState(const std::string& directory)
-        : dataset_directory(directory) {}
+    : dataset_directory(directory),
+      ollama(
+          std::getenv("OLLAMA_HOST")
+              ? std::getenv("OLLAMA_HOST")
+              : "127.0.0.1",
+          std::getenv("OLLAMA_PORT")
+              ? std::stoi(std::getenv("OLLAMA_PORT"))
+              : 11434
+      ) {}
 
     ~ApiState() {
         if (indexing_thread.joinable()) {

@@ -3,6 +3,8 @@
 #include <functional>
 #include <algorithm>
 #include <utility>
+#include <limits>
+#include <stdexcept>
 
 namespace Hallazgo_inverted_index {
 
@@ -99,7 +101,7 @@ namespace Hallazgo_inverted_index {
     }
 
     void InvertedIndex::addDocument(
-        const std::string& document_id,
+        std::uint32_t doc_id,
         const std::vector<std::string>& tokens
     ) {
         std::vector<const std::string*> sorted_tokens;
@@ -127,6 +129,13 @@ namespace Hallazgo_inverted_index {
                 *sorted_tokens[i + frequency] == token) {
                 ++frequency;
             }
+
+            if (frequency > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::overflow_error("term frequency is too large");
+            }
+
+            const std::uint32_t term_frequency =
+                static_cast<std::uint32_t>(frequency);
 
             const std::size_t bucket_id =
                 std::hash<std::string>{}(token) % bucket_count;
@@ -142,28 +151,28 @@ namespace Hallazgo_inverted_index {
                 bool posting_found = false;
 
                 for (Posting& posting : entry.postings) {
-                    if (posting.document_id == document_id) {
-                        posting.term_frequency += frequency;
+                    if (posting.doc_id == doc_id) {
+                        if (term_frequency >
+                            std::numeric_limits<std::uint32_t>::max() -
+                            posting.term_frequency) {
+                            throw std::overflow_error("term frequency is too large");
+                        }
+
+                        posting.term_frequency += term_frequency;
                         posting_found = true;
                         break;
                     }
                 }
 
                 if (!posting_found) {
-                    entry.postings.push_back({
-                        document_id,
-                        frequency
-                    });
+                    entry.postings.push_back({doc_id, term_frequency});
                 }
             } else {
                 ensureLookupCapacity(bucket);
 
                 TermEntry new_entry;
                 new_entry.term = token;
-                new_entry.postings.push_back({
-                    document_id,
-                    frequency
-                });
+                new_entry.postings.push_back({doc_id, term_frequency});
 
                 bucket.entries.push_back(std::move(new_entry));
                 insertLookup(bucket, bucket.entries.size() - 1);
@@ -174,7 +183,7 @@ namespace Hallazgo_inverted_index {
     }
 
     void InvertedIndex::addDocumentUnique(
-        const std::string& document_id,
+        std::uint32_t doc_id,
         const std::vector<std::string>& tokens
     ) {
         std::vector<const std::string*> sorted_tokens;
@@ -203,6 +212,13 @@ namespace Hallazgo_inverted_index {
                 ++frequency;
             }
 
+            if (frequency > std::numeric_limits<std::uint32_t>::max()) {
+                throw std::overflow_error("term frequency is too large");
+            }
+
+            const std::uint32_t term_frequency =
+                static_cast<std::uint32_t>(frequency);
+
             const std::size_t bucket_id =
                 std::hash<std::string>{}(token) % bucket_count;
 
@@ -214,19 +230,13 @@ namespace Hallazgo_inverted_index {
             if (findEntryIndex(bucket, token, entry_index)) {
                 TermEntry& entry = bucket.entries[entry_index];
 
-                entry.postings.push_back({
-                    document_id,
-                    frequency
-                });
+                entry.postings.push_back({doc_id, term_frequency});
             } else {
                 ensureLookupCapacity(bucket);
 
                 TermEntry new_entry;
                 new_entry.term = token;
-                new_entry.postings.push_back({
-                    document_id,
-                    frequency
-                });
+                new_entry.postings.push_back({doc_id, term_frequency});
 
                 bucket.entries.push_back(std::move(new_entry));
                 insertLookup(bucket, bucket.entries.size() - 1);
@@ -235,5 +245,4 @@ namespace Hallazgo_inverted_index {
             i += frequency;
         }
     }
-
 }

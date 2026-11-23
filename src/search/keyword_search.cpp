@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_set>
+#include <limits>
 
 namespace Hallazgo_search {
 
@@ -36,10 +37,12 @@ namespace Hallazgo_search {
         const std::string& document_id,
         const std::vector<std::string>& tokens
     ) {
+        std::uint32_t doc_id;
+
         {
             std::lock_guard<std::mutex> lock(mutex);
 
-            if (document_lengths_map.find(document_id) != document_lengths_map.end()) {
+            if (document_id_map.find(document_id) != document_id_map.end()) {
                 return;
             }
 
@@ -49,13 +52,40 @@ namespace Hallazgo_search {
                 }
             }
 
+            if (document_ids.size() >
+                std::numeric_limits<std::uint32_t>::max()) {
+                throw std::overflow_error("too many documents");
+            }
+
             pending_document_ids.push_back(document_id);
+
+            try {
+                doc_id = static_cast<std::uint32_t>(document_ids.size());
+
+                document_ids.push_back(document_id);
+
+                try {
+                    document_lengths.push_back(0);
+                    document_id_map.emplace(document_id, doc_id);
+                } catch (...) {
+                    document_lengths.resize(document_ids.size() - 1);
+                    document_ids.pop_back();
+                    throw;
+                }
+            } catch (...) {
+                pending_document_ids.pop_back();
+                throw;
+            }
         }
 
         try {
-            index.addDocument(document_id, tokens);
+            index.addDocument(doc_id, tokens);
         } catch (...) {
             std::lock_guard<std::mutex> lock(mutex);
+
+            document_id_map.erase(document_id);
+            document_ids[doc_id].clear();
+            document_lengths[doc_id] = 0;
 
             for (auto it = pending_document_ids.begin();
                 it != pending_document_ids.end(); ++it) {
@@ -71,8 +101,7 @@ namespace Hallazgo_search {
         {
             std::lock_guard<std::mutex> lock(mutex);
 
-            document_lengths.push_back({document_id, tokens.size()});
-            document_lengths_map[document_id] = tokens.size();
+            document_lengths[doc_id] = tokens.size();
             total_document_length += tokens.size();
             ++total_documents;
 
@@ -90,10 +119,12 @@ namespace Hallazgo_search {
         const std::string& document_id,
         const std::vector<std::string>& tokens
     ) {
+        std::uint32_t doc_id;
+
         {
             std::lock_guard<std::mutex> lock(mutex);
 
-            if (document_lengths_map.find(document_id) != document_lengths_map.end()) {
+            if (document_id_map.find(document_id) != document_id_map.end()) {
                 return;
             }
 
@@ -103,13 +134,40 @@ namespace Hallazgo_search {
                 }
             }
 
+            if (document_ids.size() >
+                std::numeric_limits<std::uint32_t>::max()) {
+                throw std::overflow_error("too many documents");
+            }
+
             pending_document_ids.push_back(document_id);
+
+            try {
+                doc_id = static_cast<std::uint32_t>(document_ids.size());
+
+                document_ids.push_back(document_id);
+
+                try {
+                    document_lengths.push_back(0);
+                    document_id_map.emplace(document_id, doc_id);
+                } catch (...) {
+                    document_lengths.resize(document_ids.size() - 1);
+                    document_ids.pop_back();
+                    throw;
+                }
+            } catch (...) {
+                pending_document_ids.pop_back();
+                throw;
+            }
         }
 
         try {
-            index.addDocumentUnique(document_id, tokens);
+            index.addDocumentUnique(doc_id, tokens);
         } catch (...) {
             std::lock_guard<std::mutex> lock(mutex);
+
+            document_id_map.erase(document_id);
+            document_ids[doc_id].clear();
+            document_lengths[doc_id] = 0;
 
             for (auto it = pending_document_ids.begin();
                 it != pending_document_ids.end(); ++it) {
@@ -125,8 +183,7 @@ namespace Hallazgo_search {
         {
             std::lock_guard<std::mutex> lock(mutex);
 
-            document_lengths.push_back({document_id, tokens.size()});
-            document_lengths_map[document_id] = tokens.size();
+            document_lengths[doc_id] = tokens.size();
             total_document_length += tokens.size();
             ++total_documents;
 
@@ -140,11 +197,11 @@ namespace Hallazgo_search {
         }
     }
 
-    
     std::vector<SearchResult> KeywordSearch::search(
         const std::vector<std::string>& query
     ) {
         std::unique_lock<std::mutex> lock(mutex);
+
         indexing_finished.wait(lock, [this] {
             return !indexing_in_progress;
         });
@@ -161,7 +218,7 @@ namespace Hallazgo_search {
         const double k1 = 1.5;
         const double b = 0.75;
 
-        std::unordered_map<std::string, double> score_map;
+        std::unordered_map<std::uint32_t, double> score_map;
         std::unordered_set<std::string> scored_terms;
 
         static const std::unordered_set<std::string> stop_words = {
@@ -198,29 +255,37 @@ namespace Hallazgo_search {
             );
 
             for (const auto& posting : postings) {
-                auto doc_it = document_lengths_map.find(posting.document_id);
+                const std::uint32_t doc_id = posting.doc_id;
 
-                if (doc_it == document_lengths_map.end() || doc_it->second == 0) {
+                if (doc_id >= document_lengths.size() ||
+                    document_lengths[doc_id] == 0) {
                     continue;
                 }
 
-                const double tf = static_cast<double>(posting.term_frequency);
-                const double document_length = static_cast<double>(doc_it->second);
+                const double tf =
+                    static_cast<double>(posting.term_frequency);
+
+                const double document_length =
+                    static_cast<double>(document_lengths[doc_id]);
 
                 const double denominator =
-                    tf + k1 * (1.0 - b + b * document_length / average_document_length);
+                    tf + k1 * (1.0 - b +
+                    b * document_length / average_document_length);
 
                 const double term_score =
                     idf * (tf * (k1 + 1.0)) / denominator;
 
-                score_map[posting.document_id] += term_score;
+                score_map[doc_id] += term_score;
             }
         }
 
         results.reserve(score_map.size());
 
         for (const auto& pair : score_map) {
-            results.push_back({pair.first, pair.second});
+            results.push_back({
+                document_ids[pair.first],
+                pair.second
+            });
         }
 
         std::sort(results.begin(), results.end(),
@@ -234,6 +299,5 @@ namespace Hallazgo_search {
 
         return results;
     }
-
 
 }

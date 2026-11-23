@@ -1,0 +1,8 @@
+{
+    "name": "hallazgo",
+    "version-string": "1.0.0",
+    "dependencies": [
+        "crow",
+        "cpp-httplib"
+    ]
+}
