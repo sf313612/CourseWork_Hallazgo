@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#e5e1d9">
+    <title>Literary Search Hallazgo</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Cormorant+Garamond:wght@500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="compact-header" id="compact-header" hidden>
+        <button class="brand" id="home-button" type="button" aria-label="Return to home">
+            <span>Hallazgo</span>
+        </button>
+        <div id="compact-search-slot"></div>
+    </header>
+
+    <main>
+        <section class="hero" id="hero">
+            <div class="hero-overlay"></div>
+
+            <p class="hero-subtitle">
+                In search of a book worth <span class="script-font">reading</span>
+            </p>
+
+            <div class="hero-content">
+                <h1>HALLAZGO</h1>
+            </div>
+        </section>
+
+        <section class="hero-action-slot" id="hero-action-slot">
+            <div class="index-card" id="index-card">
+                <h2 id="index-heading">Your library is not ready yet</h2>
+
+                <p id="index-description">
+                    Build the search index to start exploring the collection.
+                </p>
+
+                <div class="index-controls" id="index-controls">
+                    <div class="thread-selector">
+                        <span class="thread-label">Threads:</span>
+
+                        <div class="thread-options" id="thread-options" role="group" aria-label="Number of indexing threads">
+                            <button type="button" class="thread-option" data-threads="1">1</button>
+                            <button type="button" class="thread-option" data-threads="2">2</button>
+                            <button type="button" class="thread-option active" data-threads="4">4</button>
+                            <button type="button" class="thread-option" data-threads="8">8</button>
+                        </div>
+                    </div>
+
+                    <div class="index-actions">
+                        <button type="button" id="build-index-button" class="primary-button">
+                            Build search index
+                        </button>
+
+                        <button type="button" id="cancel-rebuild-button" class="secondary-button" hidden>
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+
+                <div class="index-progress" id="index-progress" hidden>
+                    <div class="progress-track">
+                        <div class="progress-fill"></div>
+                    </div>
+                    <p id="index-progress-text" role="status" aria-live="polite">
+                        Building inverted index...
+                    </p>
+                </div>
+
+                <p class="index-error" id="index-error" role="alert" hidden></p>
+            </div>
+
+            <div class="search-interface" id="search-interface" hidden>
+                <form id="search-form">
+                    <span class="search-icon" aria-hidden="true">⌕</span>
+
+                    <input
+                        type="text"
+                        id="query"
+                        placeholder="Describe anything you remember about the book..."
+                        autocomplete="off"
+                        required
+                    >
+
+                    <button type="button" id="clear-query-button" class="clear-query-button" aria-label="Clear search" hidden>
+                        ×
+                    </button>
+
+                    <button type="submit" id="search-button">Search</button>
+                </form>
+
+                <div class="index-status-bar" id="index-status-bar">
+                    <span class="ready-indicator"></span>
+                    <span id="ready-status-text">Index ready</span>
+                    <span class="status-separator">·</span>
+                    <button type="button" id="rebuild-index-button" class="text-button">
+                        Rebuild index
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section class="results-section" id="results-section" hidden>
+            <div class="results-heading">
+                <h2>Search Results</h2>
+                <span id="result-count"></span>
+            </div>
+
+            <p id="status" role="status" aria-live="polite"></p>
+            <div id="results"></div>
+        </section>
+    </main>
+
+    <footer>
+        <span>HALLAZGO</span>
+        <span>A literary search experience</span>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

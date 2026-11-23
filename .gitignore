@@ -48,3 +48,6 @@ desktop.ini
 
 # Additional build directory
 /build-crow/
+
+# Temporary files
+/docker
