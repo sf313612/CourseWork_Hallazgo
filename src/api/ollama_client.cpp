@@ -7,8 +7,36 @@
 
 #include <algorithm>
 #include <exception>
+#include <cctype>
+#include <unordered_set>
 
 namespace Hallazgo_api {
+
+namespace {
+
+bool isValidExpansionToken(const std::string& token) {
+    if (token.size() < 2) {
+        return false; // відсікає одиночні літери на кшталт "s" від "'s"
+    }
+
+    const bool all_digits = std::all_of(
+        token.begin(),
+        token.end(),
+        [](unsigned char ch) { return std::isdigit(ch); }
+    );
+    if (all_digits) {
+        return false; // відсікає номери списку "1", "2", "3"...
+    }
+
+    static const std::unordered_set<std::string> stop_words = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
+        "in", "into", "is", "it", "of", "on", "or", "that", "the", "to", "with"
+    };
+
+    return stop_words.find(token) == stop_words.end();
+}
+
+} // namespace
 
 OllamaClient::OllamaClient(const std::string& host, int port)
     : host(host), port(port) {
@@ -157,6 +185,10 @@ ExpansionResult OllamaClient::generateExpansion(
         const auto generated_tokens = tokenize(generated_text);
 
         for (const auto& token : generated_tokens) {
+            if (!isValidExpansionToken(token)) {
+                continue;
+            }
+
             if (std::find(
                 expansion.tokens.begin(),
                 expansion.tokens.end(),

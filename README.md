@@ -1,19 +1,45 @@
 # Hallazgo
 
 **Short name:** Halla  
-**Full title:** Intelligent Literary Discovery Engine  
-**Tagline:** Find the story you remember.
+**Full title:** Intelligent Literary Discovery Engine
 
-Hallazgo is a literary search and discovery project for English-language books from the PG-19 dataset. It aims to help readers find books from remembered details.
+Hallazgo is a C++ literary search system developed for English-language books from the PG-19 dataset. It features parallel document indexing, BM25 relevance scoring, REST API endpoints, WebSocket pipeline streaming, CLI & Web user interfaces and LLM query expansion via Ollama.
 
-## Current Status
+## Project Architecture
 
-Day 3 components are implemented: text tokenization, an in-memory inverted index, and keyword search with TF-IDF ranking. Unit tests for these components are configured with CMake and a self-contained test harness.
+- **C++ Core Engine**: Tokenizer, thread-safe inverted index, custom `ThreadPool`, and `ParallelIndexer`.
+- **Search System**: BM25 keyword search with relevance scoring, document length normalization, and stop-word filtering.
+- **REST & WebSocket API**: Built with Crow, providing `/api/health`, `/api/index`, `/api/search`, `/api/stats`, and `/ws/search`.
+- **LLM Integration**: `OllamaClient` connecting locally to `qwen2.5:1.5b-instruct` for automated query expansion.
+- **Clients**: Interactive Web UI (`clients/web/`) and C++ CLI client (`clients/cli/`).
 
-Thread-safe index access and parallel indexing with a custom thread pool are still requirements and have not been implemented.
+## Automated Testing
 
-## Planned Technologies
+Hallazgo includes a comprehensive unit and integration test suite:
 
-C++, CMake, Docker Compose, Ollama, REST API, and WebSocket.
+- **Unit Tests**: Tokenizer, Inverted Index, Search Engine, ThreadPool, Parallel Indexer, Metadata Store.
+- **REST API Integration Tests**: Real HTTP server tests covering health check, index lifecycle, search endpoints, error responses, and 8-client concurrent request handling.
+- **Opt-in LLM Integration Test**: Live query expansion test against a local Ollama instance.
 
-Development follows Specification-Driven Development (SDD) and Test-Driven Development (TDD).
+For detailed instructions on building, running, and configuring tests on Windows with CMake and CTest, see [Testing Documentation](docs/testing/testing.md).
+
+## Quick Start (Building and Testing)
+
+```powershell
+# Configure CMake build
+cmake -S . -B build
+
+# Build project and test suite
+cmake --build build --config Release
+
+# Run automated tests with CTest
+ctest --test-dir build -C Release --output-on-failure
+```
+
+## Running with Docker
+
+```powershell
+docker compose up -d --build
+```
+Access the Web UI at `http://localhost:18080`.
+

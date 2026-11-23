@@ -7,6 +7,25 @@ services:
       - ollama_data:/root/.ollama
     restart: unless-stopped
 
+  
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: hallazgo_ollama_init
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      - ollama
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until ollama list >/dev/null 2>&1; do
+          echo "Waiting for Ollama...";
+          sleep 2;
+        done;
+        ollama pull qwen2.5:1.5b-instruct
+    restart: "no"
+
+
   api:
     build:
       context: .
@@ -20,7 +39,10 @@ services:
     volumes:
       - ../dataset/pg19:/data/pg19:ro
     depends_on:
-      - ollama
+      ollama:
+        condition: service_started
+      ollama-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:

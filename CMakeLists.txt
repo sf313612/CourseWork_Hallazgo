@@ -132,6 +132,7 @@ if(WIN32)
     target_compile_definitions(hallazgo_api PRIVATE _WIN32_WINNT=0x0A00)
 endif()
 
+
 # --- CLI client ---
 add_executable(hallazgo_cli
     clients/cli/main.cpp
@@ -141,3 +142,51 @@ target_link_libraries(hallazgo_cli PRIVATE
     Crow::Crow
     httplib::httplib
 )
+
+# --- Integration tests ---
+add_executable(integration_test
+    tests/integration/integration_test.cpp
+    src/api/routes.cpp
+    src/api/metadata_store.cpp
+    src/core/thread_pool.cpp
+    src/core/tokenizer.cpp
+    src/indexing/inverted_index.cpp
+    src/indexing/parallel_indexer.cpp
+    src/search/keyword_search.cpp
+    src/api/ollama_client.cpp
+)
+
+target_include_directories(integration_test PRIVATE
+    src/api
+    src/core
+    src/indexing
+    src/search
+)
+
+target_link_libraries(integration_test PRIVATE Crow::Crow httplib::httplib)
+if(WIN32)
+    target_compile_definitions(integration_test PRIVATE _WIN32_WINNT=0x0A00)
+endif()
+
+add_test(NAME integration_test COMMAND integration_test)
+
+# --- Ollama Integration test (Opt-in) ---
+add_executable(ollama_integration_test
+    tests/integration/ollama_integration_test.cpp
+    src/api/ollama_client.cpp
+    src/core/tokenizer.cpp
+)
+
+target_include_directories(ollama_integration_test PRIVATE
+    src/api
+    src/core
+)
+
+target_link_libraries(ollama_integration_test PRIVATE Crow::Crow httplib::httplib)
+if(WIN32)
+    target_compile_definitions(ollama_integration_test PRIVATE _WIN32_WINNT=0x0A00)
+endif()
+
+# We do not register ollama_integration_test in CTest by default so it runs only when invoked explicitly
+
+

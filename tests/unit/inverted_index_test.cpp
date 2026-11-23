@@ -1,9 +1,11 @@
+
 #include <atomic>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
 #include <functional>
+#include <cstdint>
 
 #include "inverted_index.hpp"
 
@@ -20,42 +22,42 @@ using namespace Hallazgo_inverted_index;
 
 bool testFindNewWord() {
     InvertedIndex index;
-    index.addDocument("doc1", {"apple", "banana"});
+    index.addDocument(1, {"apple", "banana"});
     const std::vector<Posting> results = index.find("apple");
     CHECK(results.size() == 1);
-    CHECK(results[0].document_id == "doc1");
+    CHECK(results[0].doc_id == 1);
     CHECK(results[0].term_frequency == 1);
     return true;
 }
 
 bool testRepeatedWord() {
     InvertedIndex index;
-    index.addDocument("doc1", {"apple", "apple", "banana"});
+    index.addDocument(1, {"apple", "apple", "banana"});
 
     const std::vector<Posting> results = index.find("apple");
     CHECK(results.size() == 1);
-    CHECK(results[0].document_id == "doc1");
+    CHECK(results[0].doc_id == 1);
     CHECK(results[0].term_frequency == 2);
     return true;
 }
 
 bool testWordInMultipleDocuments() {
     InvertedIndex index;
-    index.addDocument("doc1", {"apple", "banana"});
-    index.addDocument("doc2", {"apple", "orange"});
+    index.addDocument(1, {"apple", "banana"});
+    index.addDocument(2, {"apple", "orange"});
 
     const std::vector<Posting> results = index.find("apple");
     CHECK(results.size() == 2);
-    CHECK(results[0].document_id == "doc1");
+    CHECK(results[0].doc_id == 1);
     CHECK(results[0].term_frequency == 1);
-    CHECK(results[1].document_id == "doc2");
+    CHECK(results[1].doc_id == 2);
     CHECK(results[1].term_frequency == 1);
     return true;
 }
 
 bool testFindMissingWord() {
     InvertedIndex index;
-    index.addDocument("doc1", {"apple", "banana"});
+    index.addDocument(1, {"apple", "banana"});
 
     const std::vector<Posting> results = index.find("dragon");
     CHECK(results.empty());
@@ -64,17 +66,17 @@ bool testFindMissingWord() {
 
 bool testAddDocumentUniqueGroupsRepeatedTerms() {
     InvertedIndex index;
-    index.addDocumentUnique("doc1", {"apple", "apple", "banana"});
+    index.addDocumentUnique(1, {"apple", "apple", "banana"});
 
     const std::vector<Posting> apple = index.find("apple");
     const std::vector<Posting> banana = index.find("banana");
 
     CHECK(apple.size() == 1);
-    CHECK(apple[0].document_id == "doc1");
+    CHECK(apple[0].doc_id == 1);
     CHECK(apple[0].term_frequency == 2);
 
     CHECK(banana.size() == 1);
-    CHECK(banana[0].document_id == "doc1");
+    CHECK(banana[0].doc_id == 1);
     CHECK(banana[0].term_frequency == 1);
 
     return true;
@@ -82,16 +84,17 @@ bool testAddDocumentUniqueGroupsRepeatedTerms() {
 
 bool testDuplicateDocumentIdMergesTerms() {
     InvertedIndex index;
-    index.addDocument("doc1", {"apple", "apple"});
-    index.addDocument("doc1", {"apple", "banana"});
+    index.addDocument(1, {"apple", "apple"});
+    index.addDocument(1, {"apple", "banana"});
 
     const std::vector<Posting> apple = index.find("apple");
     const std::vector<Posting> banana = index.find("banana");
+
     CHECK(apple.size() == 1);
-    CHECK(apple[0].document_id == "doc1");
+    CHECK(apple[0].doc_id == 1);
     CHECK(apple[0].term_frequency == 3);
     CHECK(banana.size() == 1);
-    CHECK(banana[0].document_id == "doc1");
+    CHECK(banana[0].doc_id == 1);
     CHECK(banana[0].term_frequency == 1);
     return true;
 }
@@ -107,9 +110,9 @@ bool testConcurrentDocumentInsertion() {
             for (std::size_t document_id = 0;
                  document_id < documents_per_worker;
                  ++document_id) {
-                const std::string id =
-                    "worker-" + std::to_string(worker_id) + "-doc-" +
-                    std::to_string(document_id);
+                const std::uint32_t id = static_cast<std::uint32_t>(
+                    worker_id * documents_per_worker + document_id + 1
+                );
                 index.addDocument(id, {"shared", "shared"});
             }
         });
@@ -121,6 +124,7 @@ bool testConcurrentDocumentInsertion() {
 
     const std::vector<Posting> postings = index.find("shared");
     CHECK(postings.size() == worker_count * documents_per_worker);
+
     for (const Posting& posting : postings) {
         CHECK(posting.term_frequency == 2);
     }
@@ -136,6 +140,7 @@ bool testConcurrentFindWhileInserting() {
     std::thread reader([&index, &reader_ready, &insertion_finished] {
         index.find("shared");
         reader_ready.store(true);
+
         while (!insertion_finished.load()) {
             index.find("shared");
         }
@@ -145,14 +150,16 @@ bool testConcurrentFindWhileInserting() {
         while (!reader_ready.load()) {
             std::this_thread::yield();
         }
+
         for (std::size_t document_id = 0;
              document_id < document_count;
              ++document_id) {
             index.addDocument(
-                "concurrent-doc-" + std::to_string(document_id),
+                static_cast<std::uint32_t>(document_id + 1),
                 {"shared"}
             );
         }
+
         insertion_finished.store(true);
     });
 
@@ -161,6 +168,7 @@ bool testConcurrentFindWhileInserting() {
 
     const std::vector<Posting> postings = index.find("shared");
     CHECK(postings.size() == document_count);
+
     for (const Posting& posting : postings) {
         CHECK(posting.term_frequency == 1);
     }
@@ -180,13 +188,13 @@ bool testHashCollisionsAndResizing() {
         }
     }
 
-    index.addDocumentUnique("doc1", terms);
+    index.addDocumentUnique(1, terms);
 
     for (const std::string& term : terms) {
         const std::vector<Posting> results = index.find(term);
 
         CHECK(results.size() == 1);
-        CHECK(results[0].document_id == "doc1");
+        CHECK(results[0].doc_id == 1);
         CHECK(results[0].term_frequency == 1);
     }
 
@@ -254,7 +262,7 @@ int main() {
         all_passed = false;
     }
 
-        if (testHashCollisionsAndResizing()) {
+    if (testHashCollisionsAndResizing()) {
         std::cout << "testHashCollisionsAndResizing: PASSED\n";
     } else {
         std::cout << "testHashCollisionsAndResizing: FAILED\n";
