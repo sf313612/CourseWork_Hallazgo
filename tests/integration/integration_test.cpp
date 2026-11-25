@@ -31,9 +31,12 @@ const std::string TEST_HOST = "127.0.0.1";
 
 class TestServer {
 public:
-    TestServer(const std::string& dataset_dir, const std::string& metadata_path)
-        : state_(dataset_dir) {
-        state_.metadata.load(metadata_path);
+    TestServer(
+        const std::string& dataset_dir,
+        const std::string& metadata_path,
+        bool enable_query_expansion = true
+    )
+        : state_(dataset_dir, enable_query_expansion) {
         registerRoutes(app_, state_);
 
         server_thread_ = std::thread([this]() {
@@ -46,7 +49,7 @@ public:
 
         bool ready = false;
         for (int i = 0; i < 50; ++i) {
-            auto response = client.Get("/api/health");
+            auto response = client.Get("/api/stats");
             if (response && response->status == 200) {
                 ready = true;
                 break;
@@ -124,7 +127,6 @@ bool testApiHealth() {
 
     CHECK(response && response->status == 200);
 
-    std::cout << "STATS RESPONSE: " << response->body << '\n';
     auto body = crow::json::load(response->body);
     CHECK(body);
     CHECK(body.has("status"));
@@ -146,12 +148,22 @@ bool testApiStatsInitialState() {
     CHECK(response && response->status == 200);
 
     auto body = crow::json::load(response->body);
+
     CHECK(body);
-    CHECK(body.has("processed_document_count"));
-    CHECK(body["processed_document_count"].i() == 0);
-    CHECK(body.has("total_document_count"));
-    CHECK(body["total_document_count"].i() == 0);
-    CHECK(body.has("indexing_status"));
+    CHECK(body.has("documents"));
+    CHECK(body.has("index_build_time_ms"));
+    CHECK(body.has("threads_used"));
+
+    CHECK(body["documents"].i() == 0);
+    CHECK(body["index_build_time_ms"].i() == 0);
+    CHECK(body["threads_used"].i() == 0);
+
+    // Старі поля не повинні входити до публічного API.
+    CHECK(!body.has("indexing_status"));
+    CHECK(!body.has("processed_document_count"));
+    CHECK(!body.has("total_document_count"));
+    CHECK(!body.has("thread_count"));
+    CHECK(!body.has("last_error"));
 
     return true;
 }
@@ -171,44 +183,31 @@ bool testApiIndexingAndSearchLifecycle() {
         "/api/search", search_request.dump(), "application/json");
     CHECK(response && response->status == 503);
 
-    // Start indexing.
+    // Start indexing and wait for completion.
     crow::json::wvalue index_request;
     index_request["threads"] = 2;
 
     response = client.Post(
         "/api/index", index_request.dump(), "application/json");
-    CHECK(response && response->status == 202);
+
+    CHECK(response && response->status == 200);
 
     auto index_body = crow::json::load(response->body);
     CHECK(index_body);
-    CHECK(index_body.has("job_id"));
+    CHECK(index_body.has("status"));
+    CHECK(index_body["status"].s() == "ok");
+    CHECK(index_body.has("documents_indexed"));
+    CHECK(index_body["documents_indexed"].i() == 3);
+    CHECK(index_body.has("time_ms"));
+    
+    response = client.Get("/api/stats");
+    CHECK(response && response->status == 200);
 
-    // Wait for indexing to finish and verify that it actually completed.
-    bool indexing_completed = false;
-
-    for (int i = 0; i < 100; ++i) {
-        auto stats_response = client.Get("/api/stats");
-
-        if (stats_response && stats_response->status == 200) {
-            auto stats_body = crow::json::load(stats_response->body);
-
-            if (stats_body && stats_body.has("indexing_status")) {
-                const std::string status = stats_body["indexing_status"].s();
-
-                if (status == "completed") {
-                    CHECK(stats_body["processed_document_count"].i() == 3);
-                    indexing_completed = true;
-                    break;
-                }
-
-                CHECK(status != "failed");
-            }
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    }
-
-    CHECK(indexing_completed);
+    auto stats_body = crow::json::load(response->body);
+    CHECK(stats_body);
+    CHECK(stats_body["documents"].i() == 3);
+    CHECK(stats_body["threads_used"].i() == 2);
+    CHECK(stats_body["index_build_time_ms"].i() > 0);
 
     // Search after indexing.
     response = client.Post(
@@ -220,6 +219,14 @@ bool testApiIndexingAndSearchLifecycle() {
     CHECK(search_body.has("results"));
     CHECK(search_body["results"].t() == crow::json::type::List);
     CHECK(search_body["results"].size() > 0);
+    
+    CHECK(search_body.has("time_ms"));
+
+    const auto& first_result = search_body["results"][0];
+
+    CHECK(first_result.has("doc_id"));
+    CHECK(first_result.has("score"));
+    CHECK(first_result.has("snippet"));
 
     // Invalid search mode must be rejected.
     crow::json::wvalue invalid_mode_request;
@@ -267,7 +274,11 @@ bool testApiInvalidIndexingRequests() {
 
 bool testConcurrentClientRequests() {
     TestDatasetFixture fixture;
-    TestServer server(fixture.dataset_dir, fixture.metadata_path);
+    TestServer server(
+        fixture.dataset_dir,
+        fixture.metadata_path,
+        false
+    );
 
     // Prepare a small searchable index directly, so this test focuses
     // on concurrent HTTP requests rather than indexing.
@@ -303,12 +314,22 @@ bool testConcurrentClientRequests() {
 
                     if (response && response->status == 200) {
                         ++success_count;
+                    } else {
+                        std::cerr << "Search request failed: "
+                                << (response ? std::to_string(response->status)
+                                            : "no response")
+                                << '\n';
                     }
                 } else {
                     auto response = client.Get("/api/stats");
 
                     if (response && response->status == 200) {
                         ++success_count;
+                    } else {
+                        std::cerr << "Stats request failed: "
+                                << (response ? std::to_string(response->status)
+                                            : "no response")
+                                << '\n';
                     }
                 }
             }
