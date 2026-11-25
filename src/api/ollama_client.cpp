@@ -164,11 +164,6 @@ ExpansionResult OllamaClient::generateExpansion(
 
         auto result = crow::json::load(response->body);
 
-        if (!result || !result.has("response")) {
-            expansion.error = "Invalid Ollama response";
-            return expansion;
-        }
-
         if (!result || !result.has("response") ||
             result["response"].t() != crow::json::type::String) {
             expansion.error = "Invalid Ollama response";

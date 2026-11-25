@@ -15,6 +15,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include <filesystem>
+#include <cctype>
 
 crow::response makeErrorResponse(
     int status,
@@ -30,6 +32,117 @@ crow::response makeErrorResponse(
     response.body = body.dump();
 
     return response;
+}
+
+std::string makeSnippet(
+    const ApiState& state,
+    const std::string& document_id,
+    const std::vector<std::string>& terms
+) {
+    namespace fs = std::filesystem;
+
+    const fs::path filename = document_id + ".txt";
+
+    fs::path file_path =
+        fs::path(state.dataset_directory) / "train" / filename;
+
+    if (!fs::exists(file_path)) {
+        file_path = fs::path(state.dataset_directory) / filename;
+    }
+
+    std::ifstream file(file_path, std::ios::binary);
+
+    if (!file) {
+        return "";
+    }
+
+    const std::string content(
+        (std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>()
+    );
+
+    std::string lower_content = content;
+
+    std::transform(
+        lower_content.begin(),
+        lower_content.end(),
+        lower_content.begin(),
+        [](unsigned char c) {
+            return static_cast<char>(std::tolower(c));
+        }
+    );
+
+    std::size_t match_position = std::string::npos;
+
+    for (const std::string& term : terms) {
+        std::string lower_term = term;
+
+        std::transform(
+            lower_term.begin(),
+            lower_term.end(),
+            lower_term.begin(),
+            [](unsigned char c) {
+                return static_cast<char>(std::tolower(c));
+            }
+        );
+
+        const std::size_t position = lower_content.find(lower_term);
+
+        if (position != std::string::npos &&
+            (match_position == std::string::npos ||
+             position < match_position)) {
+            match_position = position;
+        }
+    }
+
+    if (match_position == std::string::npos) {
+        return content.substr(0, 180);
+    }
+
+    const std::size_t context_before = 80;
+    const std::size_t context_after = 100;
+
+    std::size_t start =
+    match_position > context_before
+        ? match_position - context_before
+        : 0;
+
+std::size_t end = std::min(
+    match_position + context_after,
+    content.size()
+);
+
+// Переміщуємо початок до межі слова.
+if (start > 0) {
+    while (start < match_position &&
+           !std::isspace(static_cast<unsigned char>(content[start]))) {
+        ++start;
+    }
+
+    if (start < content.size()) {
+        ++start;
+    }
+}
+
+// Переміщуємо кінець до межі слова.
+if (end < content.size()) {
+    while (end > match_position &&
+           !std::isspace(static_cast<unsigned char>(content[end - 1]))) {
+        --end;
+    }
+}
+
+std::string snippet = content.substr(start, end - start);
+
+if (start > 0) {
+    snippet = "..." + snippet;
+}
+
+if (end < content.size()) {
+    snippet += "...";
+}
+
+return snippet;
 }
 
 struct SearchExecution {
@@ -58,7 +171,13 @@ SearchExecution performSearch(
 
     const auto expansion_start = std::chrono::steady_clock::now();
 
-    const auto expansion = state.ollama.expandQuery(query_text, tokens);
+    Hallazgo_api::ExpansionResult expansion;
+
+    if (state.query_expansion_enabled) {
+        expansion = state.ollama.expandQuery(query_text, tokens);
+    } else {
+        expansion.tokens = tokens;
+    }
 
     const auto expansion_end = std::chrono::steady_clock::now();
 
@@ -85,14 +204,17 @@ SearchExecution performSearch(
     }
 
     const auto search_start = std::chrono::steady_clock::now();
+ 
+    struct SearchHit {
+        std::string doc_id;
+        double score;
+    };
 
-    crow::json::wvalue::list results;
-    crow::json::wvalue::list progress_results;      
+    std::vector<SearchHit> hits;
 
     {
         std::lock_guard<std::mutex> lock(state.mutex);
 
-        // Повторно перевіряємо готовність індексу.
         if (!state.search.isReady()) {
             execution.index_ready = false;
             return execution;
@@ -105,29 +227,10 @@ SearchExecution performSearch(
             std::min(search_results.size(), std::size_t(10));
 
         for (std::size_t i = 0; i < result_count; ++i) {
-            const auto& item = search_results[i];
-
-            crow::json::wvalue result_item;
-            result_item["document_id"] = item.document_id;
-
-            const std::string title =
-                state.metadata.getTitle(item.document_id);
-
-            result_item["title"] =
-                title.empty() ? item.document_id : title;
-
-            result_item["score"] = item.score;
-
-            results.push_back(std::move(result_item));
-
-            if (sendProgress) {
-                crow::json::wvalue progress_item;
-                progress_item["document_id"] = item.document_id;
-                progress_item["title"] = title.empty() ? item.document_id : title;
-                progress_item["score"] = item.score;
-
-                progress_results.push_back(std::move(progress_item));
-            }
+            hits.push_back({
+                search_results[i].document_id,
+                search_results[i].score
+            });
         }
     }
 
@@ -138,10 +241,34 @@ SearchExecution performSearch(
             search_end - search_start
         ).count();
 
+    crow::json::wvalue::list results;
+    crow::json::wvalue::list progress_results;
+
+    // Формуємо сніпети вже поза mutex.
+    for (const SearchHit& hit : hits) {
+        const std::string snippet =
+            makeSnippet(state, hit.doc_id, expansion.tokens);
+
+        crow::json::wvalue result_item;
+        result_item["doc_id"] = hit.doc_id;
+        result_item["score"] = hit.score;
+        result_item["snippet"] = snippet;
+
+        results.push_back(std::move(result_item));
+
+        if (sendProgress) {
+            crow::json::wvalue progress_item;
+            progress_item["doc_id"] = hit.doc_id;
+            progress_item["score"] = hit.score;
+            progress_item["snippet"] = snippet;
+
+            progress_results.push_back(std::move(progress_item));
+        }
+    }
+
     if (sendProgress) {
         crow::json::wvalue message;
         message["stage"] = "keyword_search";
-
         message["data"]["results"] = std::move(progress_results);
         message["data"]["time_ms"] =
             static_cast<std::uint64_t>(search_time_ms);
@@ -149,39 +276,23 @@ SearchExecution performSearch(
         sendProgress(message);
     }
 
+    const auto total_time_ms =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - expansion_start
+        ).count();
+
     execution.response["results"] = std::move(results);
-    execution.response["query_expansion_time_ms"] =
-        static_cast<std::uint64_t>(expansion_time_ms);
-
-    crow::json::wvalue::list added_terms;
-
-    for (const auto& term : expansion.tokens) {
-        if (std::find(tokens.begin(), tokens.end(), term) == tokens.end()) {
-            added_terms.push_back(term);
-        }
-    }
-
-    execution.response["added_terms"] = std::move(added_terms);
-
-    execution.response["search_time_ms"] =
-        static_cast<std::uint64_t>(search_time_ms);
-    execution.response["original_terms_count"] = tokens.size();
-    execution.response["expanded_terms_count"] = expansion.tokens.size();
-    execution.response["added_terms_count"] = expansion.added_terms;
-    execution.response["query_expansion_used"] = expansion.used;
-    execution.response["query_expansion_error"] = expansion.error;
+    execution.response["time_ms"] =
+        static_cast<std::uint64_t>(total_time_ms);
 
     return execution;
 }
 
-
-bool startIndexing(
+bool startIndexingLocked(
     ApiState& state,
     std::size_t workers,
     std::string& current_job_id
 ) {
-    std::lock_guard<std::mutex> start_lock(state.indexing_start_mutex);
-
     {
         std::lock_guard<std::mutex> lock(state.mutex);
 
@@ -269,6 +380,18 @@ bool startIndexing(
     return true;
 }
 
+bool startIndexing(
+    ApiState& state,
+    std::size_t workers,
+    std::string& current_job_id
+) {
+    std::lock_guard<std::mutex> start_lock(
+        state.indexing_start_mutex
+    );
+
+    return startIndexingLocked(state, workers, current_job_id);
+}
+
 void registerRoutes(crow::SimpleApp& app, ApiState& state) {
 
     CROW_ROUTE(app, "/docs")
@@ -331,40 +454,15 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
 
         crow::json::wvalue response;
 
-        if (state.indexing_status == "null") {
-            response["indexing_status"] = nullptr;
-        } else if (state.indexing && state.indexer &&
-                state.indexer->getProcessedFiles() > 0) {
-            response["indexing_status"] = "progress";
-        } else {
-            response["indexing_status"] = state.indexing_status;
-        }
-
-        response["processed_document_count"] =
+        response["documents"] =
             state.indexer ? state.indexer->getProcessedFiles() : 0;
 
-        response["total_document_count"] =
-            state.indexer ? state.indexer->getTotalFiles() : 0;
+        response["index_build_time_ms"] = state.index_build_time_ms;
 
-        if (state.indexing) {
-            response["index_build_time_ms"] =
-                static_cast<std::uint64_t>(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(
-                        std::chrono::steady_clock::now() -
-                        state.indexing_started_at
-                    ).count()
-                );
-        } else {
-            response["index_build_time_ms"] = state.index_build_time_ms;
-        }
-
-        response["thread_count"] = state.thread_count;
-
-        response["last_error"] = state.last_error;
+        response["threads_used"] = state.thread_count;
 
         return response;
     });
-
     
     CROW_ROUTE(app, "/api/index").methods(crow::HTTPMethod::Post)
     ([&state](const crow::request& req) {
@@ -384,7 +482,11 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
 
         std::string current_job_id;
 
-        if (!startIndexing(state, workers, current_job_id)) {
+        std::unique_lock<std::mutex> start_lock(
+            state.indexing_start_mutex
+        );
+
+        if (!startIndexingLocked(state, workers, current_job_id)) {
             return makeErrorResponse(
                 409,
                 "indexing_in_progress",
@@ -392,10 +494,30 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
             );
         }
 
-        crow::json::wvalue response;
-        response["job_id"] = current_job_id;
+        // Wait until indexing is completed.
+        if (state.indexing_thread.joinable()) {
+            state.indexing_thread.join();
+        }
 
-        crow::response result(202);
+        std::lock_guard<std::mutex> lock(state.mutex);
+
+        if (state.indexing_status == "error") {
+            return makeErrorResponse(
+                500,
+                "indexing_failed",
+                state.last_error.empty() ? "Indexing failed" : state.last_error
+            );
+        }
+
+        const std::size_t docs_indexed =
+            state.indexer ? state.indexer->getProcessedFiles() : 0;
+
+        crow::json::wvalue response;
+        response["status"] = "ok";
+        response["documents_indexed"] = docs_indexed;
+        response["time_ms"] = state.index_build_time_ms;
+
+        crow::response result(200);
         result.set_header("Content-Type", "application/json");
         result.body = response.dump();
 
@@ -449,24 +571,22 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
 
     });
 
-
     CROW_WEBSOCKET_ROUTE(app, "/ws/search")
-    .onopen([](crow::websocket::connection& conn) {
-        crow::json::wvalue message;
-        message["type"] = "connected";
-        message["message"] = "WebSocket connection established";
-        conn.send_text(message.dump());
-    })
     .onmessage([&state](
         crow::websocket::connection& conn,
         const std::string& data,
         bool is_binary
     ) {
-        if (is_binary) {
+
+        const auto sendError = [&conn](const std::string& error_message) {
             crow::json::wvalue message;
-            message["type"] = "error";
-            message["message"] = "Binary messages are not supported";
+            message["stage"] = "error";
+            message["data"]["message"] = error_message;
             conn.send_text(message.dump());
+        };
+
+        if (is_binary) {
+            sendError("Binary messages are not supported");
             return;
         }
 
@@ -474,20 +594,14 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
 
         if (!body || !body.has("query") ||
             body["query"].t() != crow::json::type::String) {
-            crow::json::wvalue message;
-            message["type"] = "error";
-            message["message"] = "Invalid search request";
-            conn.send_text(message.dump());
+            sendError("Invalid search request");
             return;
         }
 
         const std::string query_text = body["query"].s();
 
         if (tokenize(query_text).empty()) {
-            crow::json::wvalue message;
-            message["type"] = "error";
-            message["message"] = "Query contains no searchable words";
-            conn.send_text(message.dump());
+            sendError("Query contains no searchable words");
             return;
         }
 
@@ -500,10 +614,7 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
         );
 
         if (!execution.index_ready) {
-            crow::json::wvalue message;
-            message["type"] = "error";
-            message["message"] = "Index is not ready";
-            conn.send_text(message.dump());
+            sendError("Index is not ready");
             return;
         }
 

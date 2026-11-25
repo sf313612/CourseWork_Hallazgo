@@ -1,7 +1,9 @@
+
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -14,16 +16,20 @@
 #include "ollama_client.hpp"
 
 struct ApiState {
-    explicit ApiState(const std::string& directory)
-    : dataset_directory(directory),
-      ollama(
-          std::getenv("OLLAMA_HOST")
-              ? std::getenv("OLLAMA_HOST")
-              : "127.0.0.1",
-          std::getenv("OLLAMA_PORT")
-              ? std::stoi(std::getenv("OLLAMA_PORT"))
-              : 11434
-      ) {}
+    explicit ApiState(
+        const std::string& directory,
+        bool enable_query_expansion = true
+    )
+        : ollama(
+              std::getenv("OLLAMA_HOST")
+                  ? std::getenv("OLLAMA_HOST")
+                  : "127.0.0.1",
+              std::getenv("OLLAMA_PORT")
+                  ? std::stoi(std::getenv("OLLAMA_PORT"))
+                  : 11434
+          ),
+          dataset_directory(directory),
+          query_expansion_enabled(enable_query_expansion) {}
 
     ~ApiState() {
         if (indexing_thread.joinable()) {
@@ -33,10 +39,11 @@ struct ApiState {
 
     Hallazgo_search::KeywordSearch search;
     Hallazgo_api::MetadataStore metadata;
-    
+
     Hallazgo_api::OllamaClient ollama;
 
     std::string dataset_directory;
+    bool query_expansion_enabled = true;
 
     std::mutex mutex;
     std::mutex indexing_start_mutex;
