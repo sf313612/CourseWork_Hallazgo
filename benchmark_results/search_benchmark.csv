@@ -1,0 +1,6 @@
+﻿concurrent_clients,duration_seconds,successful_requests,failed_requests,total_requests,throughput_rps,avg_latency_ms,p95_latency_ms
+1,15.62,3,0,3,0.192,5199.94,6784.5
+5,29.85,6,0,6,0.201,17262.27,25543.39
+10,74.1,10,0,10,0.135,47592.17,74041.11
+20,128.08,11,10,21,0.086,86690.32,120029.9
+50,120.44,5,45,50,0.042,78511.22,120032.09
