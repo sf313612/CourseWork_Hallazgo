@@ -53,7 +53,7 @@ struct ApiState {
     bool indexing = false;
     std::string job_id;
     std::string last_error;
-    std::uint64_t next_job_id = 1;
+    std::uint64_t next_job_id = 1; 
     std::size_t thread_count = 0;
     std::string indexing_status = "null";
 

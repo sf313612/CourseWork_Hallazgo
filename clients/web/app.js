@@ -31,11 +31,13 @@ const rebuildIndexButton = document.getElementById("rebuild-index-button");
 let selectedThreads = 4;
 let indexState = "unindexed";
 let isRebuilding = false;
-let statusPolling = false;
+let indexRequestPending = false;
 
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+let indexSocket = null;
+let indexProgressTimer = null;
+let indexReconnectTimer = null;
+let displayedCompletedJobId = null;
+let loadingCompletedJobId = null;
 
 async function fetchStats() {
     const response = await fetch("/api/stats");
@@ -47,34 +49,8 @@ async function fetchStats() {
     return response.json();
 }
 
-function isIndexReady(stats) {
-    const state = String(stats.indexing_status || "").toLowerCase();
-
-    if (state === "completed" || state === "ready") {
-        return true;
-    }
-
-    const total = Number(stats.total_document_count || 0);
-    const processed = Number(
-        stats.processed_document_count || stats.documents || 0
-    );
-
-    return total > 0 && processed >= total;
-}
-
-function isIndexing(status) {
-    const state = String(status || "").toLowerCase();
-    return ["started", "progress", "indexing", "running",
-            "in_progress", "in-progress", "building"].includes(state);
-}
-
 function getDocumentCount(stats) {
-    return Number(
-        stats.documents ||
-        stats.processed_document_count ||
-        stats.total_document_count ||
-        0
-    );
+    return Number(stats.documents || 0);
 }
 
 function formatIndexTime(milliseconds) {
@@ -96,99 +72,6 @@ function formatIndexTime(milliseconds) {
 
     return `${hours}h ${remainingMinutes}m`;
 }
-
-
-function searchWithWebSocket(query) {
-    return new Promise((resolve, reject) => {
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const socket = new WebSocket(
-            `${protocol}//${window.location.host}/ws/search`
-        );
-
-        let completed = false;
-        let results = [];
-
-        socket.onopen = () => {
-            socket.send(JSON.stringify({ query }));
-        };
-
-        socket.onmessage = (event) => {
-            let message;
-
-            try {
-                message = JSON.parse(event.data);
-            } catch {
-                socket.close();
-                reject(new Error("Invalid WebSocket response"));
-                return;
-            }
-
-            switch (message.stage) {
-                case "query_expansion": {
-                    const terms = message.data?.expanded_terms || [];
-                    const stage = document.createElement("p");
-
-                    stage.textContent =
-                        `Query expansion: ${terms.join(", ")}`;
-
-                    statusElement.append(stage);
-                    break;
-                }
-
-                case "keyword_search": {
-                    results = message.data?.results || [];
-
-                    const stage = document.createElement("p");
-                    const time = message.data?.time_ms ?? 0;
-
-                    stage.textContent =
-                        `Keyword search completed in ${time} ms.`;
-
-                    statusElement.append(stage);
-                    break;
-                }
-
-                case "done": {
-                    completed = true;
-
-                    const stage = document.createElement("p");
-                    stage.textContent = "Search completed.";
-
-                    statusElement.append(stage);
-
-                    socket.close();
-                    resolve(results);
-                    break;
-                }
-
-                case "error": {
-                    completed = true;
-                    socket.close();
-
-                    reject(new Error(
-                        message.data?.message || "WebSocket search failed"
-                    ));
-                    break;
-                }
-            }
-        };
-
-        socket.onerror = () => {
-            if (!completed) {
-                completed = true;
-                reject(new Error("Could not connect to the search WebSocket"));
-            }
-        };
-
-        socket.onclose = () => {
-            if (!completed) {
-                completed = true;
-                reject(new Error("WebSocket connection closed unexpectedly"));
-            }
-        };
-    });
-}
-
 
 function setThreadControlsDisabled(disabled) {
     threadOptions.querySelectorAll("button").forEach(button => {
@@ -240,11 +123,13 @@ function showReadyState(stats) {
     buildIndexButton.disabled = false;
     buildIndexButton.textContent = "Build search index";
 
+    cancelRebuildButton.hidden = true;
+
     setThreadControlsDisabled(false);
 
     const count = getDocumentCount(stats);
     const buildTime = Number(stats.index_build_time_ms);
-    const threads = Number(stats.threads_used || stats.thread_count || selectedThreads);
+    const threads = Number(stats.threads_used || selectedThreads);
 
     let statusText =
         `Index ready · ${count.toLocaleString()} documents indexed`;
@@ -262,6 +147,7 @@ function showReadyState(stats) {
 
 function showUnindexedState(message = "") {
     indexState = "unindexed";
+    isRebuilding = false;
 
     showIndexCard();
 
@@ -273,10 +159,14 @@ function showUnindexedState(message = "") {
     buildIndexButton.disabled = false;
     buildIndexButton.textContent = "Build search index";
 
+    cancelRebuildButton.hidden = true;
+
     setThreadControlsDisabled(false);
 
     if (message) {
         showIndexError(message);
+    } else {
+        clearIndexError();
     }
 }
 
@@ -306,82 +196,27 @@ async function updateIndexState() {
     try {
         const stats = await fetchStats();
 
-        const state = String(stats.indexing_status || "").toLowerCase();
-
-        if (isIndexReady(stats)) {
-            showReadyState(stats);
-        } else if (state === "error") {
-            showUnindexedState(stats.last_error || "Indexing failed. Please try again.");
-        } else if (isIndexing(state)) {
-            showIndexingState();
-            selectedThreads = Number(stats.thread_count || selectedThreads);
-            pollIndexStatus();
-        } else {
-            showUnindexedState();
+        if (Number(stats.threads_used) > 0) {
+            selectThreadCount(Number(stats.threads_used));
         }
-    } catch (error) {
-        showUnindexedState(
-            "Could not check the index status. Please make sure the server is running."
-        );
-    }
-}
-
-async function pollIndexStatus() {
-    if (statusPolling) {
-        return;
+    } catch {
+        // The WebSocket provides the actual indexing state.
     }
 
-    statusPolling = true;
-
-    try {
-        while (indexState === "indexing") {
-            await sleep(2000);
-
-            try {
-                const stats = await fetchStats();
-
-                const processed = Number(stats.processed_document_count || 0);
-                const total = Number(stats.total_document_count || 0);
-
-                if (total > 0) {
-                    indexProgressText.textContent =
-                        `Indexing documents: ${processed.toLocaleString()} / ${total.toLocaleString()} (${selectedThreads} threads)...`;
-                } else {
-                    indexProgressText.textContent =
-                        `Building inverted index using ${selectedThreads} threads...`;
-                }
-
-                if (isIndexReady(stats)) {
-                    showReadyState(stats);
-                    break;
-                }
-
-                const state = String(stats.indexing_status || "").toLowerCase();
-
-                if (["failed", "error"].includes(state)) {
-                    showUnindexedState(
-                        stats.last_error || "Indexing failed. Please try again."
-                    );
-                    break;
-                }
-
-            } catch (error) {
-                indexProgressText.textContent =
-                    "Waiting for the indexing status...";
-            }
-        }
-    } finally {
-        statusPolling = false;
-    }
+    connectIndexWebSocket();
 }
 
 async function startIndexing() {
-    if (indexState === "indexing") {
+    if (indexState === "indexing" || indexRequestPending) {
         return;
     }
 
+    indexRequestPending = true;
+
     clearIndexError();
     showIndexingState();
+
+    connectIndexWebSocket();
 
     try {
         const response = await fetch("/api/index", {
@@ -394,180 +229,344 @@ async function startIndexing() {
             })
         });
 
-        let data = {};
+        let data;
 
         try {
             data = await response.json();
-        } catch (error) {
-            // The response may not contain a JSON body.
+        } catch {
+            throw new Error("Invalid response from indexing server.");
         }
 
         if (!response.ok) {
             throw new Error(
                 data.error?.message ||
                 data.message ||
-                `Indexing request failed: ${response.status}`
+                `Indexing failed: ${response.status}`
             );
         }
 
-        // The endpoint responds with 202 and starts indexing asynchronously.
-        // Polling will handle tracking progress and completion.
-
-        // Start polling only after the API accepts the indexing request.
-        pollIndexStatus();
-
-    } catch (error) {
-        await sleep(500);
-
-        try {
-            const stats = await fetchStats();
-
-            if (isIndexReady(stats)) {
-                showReadyState(stats);
-                return;
-            }
-        } catch (statsError) {
-            // Keep the original request error.
+        if (data.status !== "ok") {
+            throw new Error(data.message || "Indexing failed.");
         }
 
-        indexState = "unindexed";
-        showIndexCard();
+        indexRequestPending = false;
 
-        buildIndexButton.disabled = false;
-        buildIndexButton.textContent = isRebuilding ? "Rebuild index" : "Build search index";
-        setThreadControlsDisabled(false);
+        showReadyState({
+            documents: data.documents_indexed,
+            index_build_time_ms: data.time_ms,
+            threads_used: selectedThreads
+        });
 
-        indexProgress.hidden = true;
+    } catch (error) {
+        indexRequestPending = false;
 
-        showIndexError(error.message);
+        showUnindexedState(
+            error.message || "Indexing failed."
+        );
     }
 }
 
-function startIndexingWithWebSocket() {
-    if (indexState === "indexing") {
+function requestIndexProgress() {
+    if (indexSocket?.readyState === WebSocket.OPEN) {
+        indexSocket.send(JSON.stringify({
+            action: "progress"
+        }));
+    }
+}
+
+function connectIndexWebSocket() {
+    if (
+        indexSocket &&
+        (indexSocket.readyState === WebSocket.OPEN ||
+         indexSocket.readyState === WebSocket.CONNECTING)
+    ) {
+        requestIndexProgress();
         return;
     }
 
-    clearIndexError();
-    showIndexingState();
+    const protocol =
+        window.location.protocol === "https:" ? "wss:" : "ws:";
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(
+    indexSocket = new WebSocket(
         `${protocol}//${window.location.host}/ws/index`
     );
 
-    let progressTimer = null;
-    let completed = false;
+    indexSocket.onopen = () => {
+        requestIndexProgress();
 
-    function finish() {
-        if (progressTimer !== null) {
-            clearInterval(progressTimer);
-            progressTimer = null;
+        if (indexProgressTimer !== null) {
+            clearInterval(indexProgressTimer);
         }
 
-        socket.close();
-    }
-
-    socket.onopen = () => {
-        socket.send(JSON.stringify({ threads: selectedThreads }));
+        indexProgressTimer = setInterval(
+            requestIndexProgress,
+            1000
+        );
     };
 
-    socket.onmessage = async (event) => {
+    indexSocket.onmessage = async (event) => {
         let message;
 
         try {
             message = JSON.parse(event.data);
         } catch {
-            finish();
-            showUnindexedState("Invalid response from indexing server.");
+            showIndexError("Invalid indexing status response.");
+            return;
+        }
+
+        const data = message.data || {};
+
+        // The backend sends { type: "connected" } on connection.
+        if (message.type === "connected") {
+            requestIndexProgress();
             return;
         }
 
         switch (message.stage) {
             case "indexing_started":
-                indexProgressText.textContent =
-                    `Indexing documents: 0 / 0 (${selectedThreads} threads)...`;
+                if (indexState !== "indexing") {
+                    showIndexingState();
+                }
+                break;
 
-                // Запитуємо актуальний прогрес щосекунди.
-                progressTimer = setInterval(() => {
-                    if (socket.readyState === WebSocket.OPEN) {
-                        socket.send(JSON.stringify({ action: "progress" }));
-                    }
-                }, 1000);
-
-                // Отримуємо перший стан одразу.
-                socket.send(JSON.stringify({ action: "progress" }));
+            case "idle":
+                if (!indexRequestPending && indexState !== "ready") {
+                    showUnindexedState();
+                }
                 break;
 
             case "indexing_progress": {
-                if (progressTimer === null) {
-                    progressTimer = setInterval(() => {
-                        if (socket.readyState === WebSocket.OPEN) {
-                            socket.send(JSON.stringify({ action: "progress" }));
-                        }
-                    }, 1000);
+                if (indexState !== "indexing") {
+                    showIndexingState();
                 }
 
-                const processed =
-                    Number(message.data?.processed_documents || 0);
-                const total =
-                    Number(message.data?.total_documents || 0);
-                const percent =
-                    Number(message.data?.progress_percent || 0);
+                const processed = Number(
+                    data.processed_documents || 0
+                );
+
+                const total = Number(
+                    data.total_documents || 0
+                );
+
+                const percentage = Number(
+                    data.progress_percent || 0
+                );
 
                 indexProgressText.textContent =
-                    `Indexing documents: ${processed.toLocaleString()} / ${total.toLocaleString()} (${selectedThreads} threads) · ${percent}%`;
+                    `${processed.toLocaleString()} / ` +
+                    `${total.toLocaleString()} documents · ` +
+                    `${percentage}% · ${selectedThreads} threads`;
 
                 break;
             }
 
-            case "done":
-                completed = true;
-                finish();
+            case "done": {
+                if (indexRequestPending) {
+                    indexProgressText.textContent =
+                        `${Number(data.processed_documents || 0).toLocaleString()} / ` +
+                        `${Number(data.total_documents || 0).toLocaleString()} documents · ` +
+                        `100% · Finalizing index...`;
+
+                    break;
+                }
+
+                const jobId = data.job_id;
+
+                if (
+                    jobId &&
+                    (
+                        jobId === displayedCompletedJobId ||
+                        jobId === loadingCompletedJobId
+                    )
+                ) {
+                    break;
+                }
+
+                loadingCompletedJobId = jobId || null;
 
                 try {
                     const stats = await fetchStats();
-                    showReadyState(stats);
-                } catch {
-                    showReadyState({
-                        documents: message.data?.processed_documents || 0,
-                        index_build_time_ms: message.data?.time_ms || 0,
-                        threads_used: selectedThreads
-                    });
-                }
-                break;
 
-            case "error":
-                completed = true;
-                finish();
-                showUnindexedState(
-                    message.data?.message || "Indexing failed."
-                );
+                    if (Number(stats.threads_used) > 0) {
+                        selectThreadCount(Number(stats.threads_used));
+                    }
+
+                    showReadyState(stats);
+
+                    if (jobId) {
+                        displayedCompletedJobId = jobId;
+                    }
+                } catch {
+                    showIndexError(
+                        "Indexing completed, but statistics could not be loaded."
+                    );
+                } finally {
+                    loadingCompletedJobId = null;
+                }
+
                 break;
+            }
+
+            case "error": {
+                const errorMessage =
+                    data.message || "Indexing failed.";
+
+                if (indexRequestPending) {
+                    // Wait for the synchronous POST /api/index response.
+                    showIndexError(errorMessage);
+                } else {
+                    showUnindexedState(errorMessage);
+                }
+
+                break;
+            }
         }
     };
 
-    socket.onerror = () => {
-        if (!completed) {
-            completed = true;
-            finish();
-            showUnindexedState(
-                "Could not connect to the indexing WebSocket."
+    indexSocket.onerror = () => {
+        if (indexState !== "ready") {
+            showIndexError(
+                "Could not connect to the indexing status service."
             );
         }
     };
 
-    socket.onclose = () => {
-        if (!completed) {
-            completed = true;
+    indexSocket.onclose = () => {
+        if (indexProgressTimer !== null) {
+            clearInterval(indexProgressTimer);
+            indexProgressTimer = null;
+        }
 
-            if (indexState === "indexing") {
-                showUnindexedState(
-                    "Indexing connection closed unexpectedly."
-                );
-            }
+        indexSocket = null;
+
+        if (indexReconnectTimer === null) {
+            indexReconnectTimer = setTimeout(() => {
+                indexReconnectTimer = null;
+                connectIndexWebSocket();
+            }, 1000);
         }
     };
+}
+
+function searchWithWebSocket(query) {
+    return new Promise((resolve, reject) => {
+        const protocol =
+            window.location.protocol === "https:" ? "wss:" : "ws:";
+
+        const socket = new WebSocket(
+            `${protocol}//${window.location.host}/ws/search`
+        );
+
+        let completed = false;
+        let results = [];
+
+        function closeSocket() {
+            if (
+                socket.readyState === WebSocket.OPEN ||
+                socket.readyState === WebSocket.CONNECTING
+            ) {
+                socket.close(1000, "Search completed");
+            }
+        }
+
+        function showStage(text) {
+            const stage = document.createElement("p");
+            stage.textContent = text;
+            statusElement.append(stage);
+        }
+
+        socket.onopen = () => {
+            socket.send(JSON.stringify({ query }));
+        };
+
+        socket.onmessage = (event) => {
+            let message;
+
+            try {
+                message = JSON.parse(event.data);
+            } catch {
+                completed = true;
+                closeSocket();
+                reject(new Error("Invalid WebSocket response."));
+                return;
+            }
+
+            switch (message.stage) {
+                case "search_started":
+                    showStage("Search started...");
+                    break;
+
+                case "query_expansion_started":
+                    showStage("Expanding query...");
+                    break;
+
+                case "query_expansion": {
+                    const terms = message.data?.expanded_terms || [];
+
+                    showStage(
+                        `Query expansion: ${terms.join(", ")}`
+                    );
+                    break;
+                }
+
+                case "keyword_search_started":
+                    showStage("Searching the index...");
+                    break;
+
+                case "keyword_search": {
+                    results = Array.isArray(message.data?.results)
+                        ? message.data.results
+                        : [];
+
+                    const time = Number(message.data?.time_ms || 0);
+
+                    showStage(
+                        `Keyword search completed in ${time} ms.`
+                    );
+                    break;
+                }
+
+                case "done":
+                    completed = true;
+                    showStage("Search completed.");
+                    resolve(results);
+                    closeSocket();
+                    break;
+
+                case "error": {
+                    completed = true;
+
+                    const errorMessage =
+                        message.data?.message ||
+                        message.message ||
+                        message.error?.message ||
+                        "WebSocket search failed.";
+
+                    closeSocket();
+                    reject(new Error(errorMessage));
+                    break;
+                }
+            }
+        };
+
+        socket.onerror = () => {
+            if (!completed) {
+                completed = true;
+                reject(
+                    new Error("Could not connect to the search WebSocket.")
+                );
+            }
+        };
+
+        socket.onclose = () => {
+            if (!completed) {
+                completed = true;
+                reject(
+                    new Error("WebSocket connection closed unexpectedly.")
+                );
+            }
+        };
+    });
 }
 
 function prepareRebuild() {
@@ -707,7 +706,7 @@ threadOptions.addEventListener("click", (event) => {
     selectThreadCount(Number(button.dataset.threads));
 });
 
-buildIndexButton.addEventListener("click", startIndexingWithWebSocket);
+buildIndexButton.addEventListener("click", startIndexing);
 
 rebuildIndexButton.addEventListener("click", prepareRebuild);
 

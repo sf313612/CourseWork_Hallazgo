@@ -73,6 +73,7 @@ std::string makeSnippet(
     );
 
     std::size_t match_position = std::string::npos;
+    std::size_t match_length = 0;
 
     for (const std::string& term : terms) {
         std::string lower_term = term;
@@ -86,63 +87,70 @@ std::string makeSnippet(
             }
         );
 
+        if (lower_term.empty()) {
+            continue;
+        }
+
         const std::size_t position = lower_content.find(lower_term);
 
         if (position != std::string::npos &&
             (match_position == std::string::npos ||
              position < match_position)) {
             match_position = position;
+            match_length = lower_term.size();
         }
     }
 
+    // Не повертаємо початок книги, якщо збіг не знайдений.
     if (match_position == std::string::npos) {
-        return content.substr(0, 180);
+        return "";
     }
 
-    const std::size_t context_before = 80;
-    const std::size_t context_after = 100;
+    const std::size_t context_before = 100;
+    const std::size_t context_after = 120;
 
     std::size_t start =
-    match_position > context_before
-        ? match_position - context_before
-        : 0;
+        match_position > context_before
+            ? match_position - context_before
+            : 0;
 
-std::size_t end = std::min(
-    match_position + context_after,
-    content.size()
-);
+    std::size_t end = std::min(
+        match_position + match_length + context_after,
+        content.size()
+    );
 
-// Переміщуємо початок до межі слова.
-if (start > 0) {
-    while (start < match_position &&
-           !std::isspace(static_cast<unsigned char>(content[start]))) {
-        ++start;
+    // Переміщуємо початок до початку слова.
+    if (start > 0) {
+        while (start < match_position &&
+               !std::isspace(static_cast<unsigned char>(content[start - 1]))) {
+            --start;
+        }
+
+        while (start < match_position &&
+               std::isspace(static_cast<unsigned char>(content[start]))) {
+            ++start;
+        }
     }
 
-    if (start < content.size()) {
-        ++start;
+    // Переміщуємо кінець до кінця слова.
+    if (end < content.size()) {
+        while (end < content.size() &&
+               !std::isspace(static_cast<unsigned char>(content[end]))) {
+            ++end;
+        }
     }
-}
 
-// Переміщуємо кінець до межі слова.
-if (end < content.size()) {
-    while (end > match_position &&
-           !std::isspace(static_cast<unsigned char>(content[end - 1]))) {
-        --end;
+    std::string snippet = content.substr(start, end - start);
+
+    if (start > 0) {
+        snippet = "..." + snippet;
     }
-}
 
-std::string snippet = content.substr(start, end - start);
+    if (end < content.size()) {
+        snippet += "...";
+    }
 
-if (start > 0) {
-    snippet = "..." + snippet;
-}
-
-if (end < content.size()) {
-    snippet += "...";
-}
-
-return snippet;
+    return snippet;
 }
 
 struct SearchExecution {
@@ -173,6 +181,13 @@ SearchExecution performSearch(
 
     Hallazgo_api::ExpansionResult expansion;
 
+    // Повідомляємо, що почалося розширення запиту.
+    if (sendProgress) {
+        crow::json::wvalue message;
+        message["stage"] = "query_expansion_started";
+        sendProgress(message);
+    }
+
     if (state.query_expansion_enabled) {
         expansion = state.ollama.expandQuery(query_text, tokens);
     } else {
@@ -180,11 +195,6 @@ SearchExecution performSearch(
     }
 
     const auto expansion_end = std::chrono::steady_clock::now();
-
-    const auto expansion_time_ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            expansion_end - expansion_start
-        ).count();
 
     // Надсилаємо результат розширення запиту.
     if (sendProgress) {
@@ -200,6 +210,13 @@ SearchExecution performSearch(
 
         message["data"]["expanded_terms"] = std::move(expanded_terms);
 
+        sendProgress(message);
+    }
+
+    // Повідомляємо, що почався пошук в індексі.
+    if (sendProgress) {
+        crow::json::wvalue message;
+        message["stage"] = "keyword_search_started";
         sendProgress(message);
     }
 
@@ -251,6 +268,7 @@ SearchExecution performSearch(
 
         crow::json::wvalue result_item;
         result_item["doc_id"] = hit.doc_id;
+        result_item["title"] = state.metadata.getTitle(hit.doc_id);
         result_item["score"] = hit.score;
         result_item["snippet"] = snippet;
 
@@ -259,6 +277,7 @@ SearchExecution performSearch(
         if (sendProgress) {
             crow::json::wvalue progress_item;
             progress_item["doc_id"] = hit.doc_id;
+            progress_item["title"] = state.metadata.getTitle(hit.doc_id);
             progress_item["score"] = hit.score;
             progress_item["snippet"] = snippet;
 
@@ -390,6 +409,23 @@ bool startIndexing(
     );
 
     return startIndexingLocked(state, workers, current_job_id);
+}
+
+struct WsSearchConnectionState {
+    std::mutex mutex;
+    crow::websocket::connection* connection = nullptr;
+    bool search_in_progress = false;
+};
+
+void sendWsMessage(
+    const std::shared_ptr<WsSearchConnectionState>& connection_state,
+    const crow::json::wvalue& message
+) {
+    std::lock_guard<std::mutex> lock(connection_state->mutex);
+
+    if (connection_state->connection != nullptr) {
+        connection_state->connection->send_text(message.dump());
+    }
 }
 
 void registerRoutes(crow::SimpleApp& app, ApiState& state) {
@@ -571,18 +607,60 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
 
     });
 
-    CROW_WEBSOCKET_ROUTE(app, "/ws/search")
+    
+CROW_WEBSOCKET_ROUTE(app, "/ws/search")
+    .onaccept([](const crow::request&, void** user_data) {
+        if (user_data == nullptr) {
+            return false;
+        }
+
+        *user_data = new std::shared_ptr<WsSearchConnectionState>(
+            std::make_shared<WsSearchConnectionState>()
+        );
+
+        return true;
+    })
+    .onopen([](crow::websocket::connection& conn) {
+        auto* connection_state =
+            static_cast<std::shared_ptr<WsSearchConnectionState>*>(
+                conn.userdata()
+            );
+
+        if (connection_state == nullptr || !(*connection_state)) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock((*connection_state)->mutex);
+        (*connection_state)->connection = &conn;
+    })
     .onmessage([&state](
         crow::websocket::connection& conn,
         const std::string& data,
         bool is_binary
     ) {
+        auto* connection_state_ptr =
+            static_cast<std::shared_ptr<WsSearchConnectionState>*>(
+                conn.userdata()
+            );
 
-        const auto sendError = [&conn](const std::string& error_message) {
+        if (connection_state_ptr == nullptr) {
+            return;
+        }
+
+        const auto connection_state = *connection_state_ptr;
+
+        if (!connection_state) {
+            return;
+        }
+
+        const auto sendError = [&connection_state](
+            const std::string& error_message
+        ) {
             crow::json::wvalue message;
             message["stage"] = "error";
             message["data"]["message"] = error_message;
-            conn.send_text(message.dump());
+
+            sendWsMessage(connection_state, message);
         };
 
         if (is_binary) {
@@ -605,35 +683,112 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
             return;
         }
 
-        const auto execution = performSearch(
-            state,
-            query_text,
-            [&conn](const crow::json::wvalue& message) {
-                conn.send_text(message.dump());
-            }
-        );
+        {
+            std::lock_guard<std::mutex> lock(connection_state->mutex);
 
-        if (!execution.index_ready) {
-            sendError("Index is not ready");
-            return;
+            if (connection_state->search_in_progress) {
+                crow::json::wvalue message;
+                message["stage"] = "error";
+                message["data"]["message"] = "Search is already in progress";
+
+                if (connection_state->connection != nullptr) {
+                    connection_state->connection->send_text(message.dump());
+                }
+
+                return;
+            }
+
+            connection_state->search_in_progress = true;
         }
 
-        crow::json::wvalue message;
-        message["stage"] = "done";
+        crow::json::wvalue started_message;
+        started_message["stage"] = "search_started";
+        sendWsMessage(connection_state, started_message);
 
-        conn.send_text(message.dump());
+        try {
+            std::thread([&state, connection_state, query_text]() {
+                try {
+                    const auto execution = performSearch(
+                        state,
+                        query_text,
+                        [&connection_state](
+                            const crow::json::wvalue& message
+                        ) {
+                            sendWsMessage(connection_state, message);
+                        }
+                    );
+
+                    if (!execution.index_ready) {
+                        crow::json::wvalue message;
+                        message["stage"] = "error";
+                        message["data"]["message"] = "Index is not ready";
+
+                        sendWsMessage(connection_state, message);
+                    }
+                    else {
+                        crow::json::wvalue message;
+                        message["stage"] = "done";
+
+                        sendWsMessage(connection_state, message);
+                    }
+                }
+                catch (const std::exception& error) {
+                    crow::json::wvalue message;
+                    message["stage"] = "error";
+                    message["data"]["message"] = error.what();
+
+                    sendWsMessage(connection_state, message);
+                }
+                catch (...) {
+                    crow::json::wvalue message;
+                    message["stage"] = "error";
+                    message["data"]["message"] = "Unknown search error";
+
+                    sendWsMessage(connection_state, message);
+                }
+
+                std::lock_guard<std::mutex> lock(connection_state->mutex);
+                connection_state->search_in_progress = false;
+            }).detach();
+        }
+        catch (const std::exception& error) {
+            {
+                std::lock_guard<std::mutex> lock(connection_state->mutex);
+                connection_state->search_in_progress = false;
+            }
+
+            sendError(error.what());
+        }
     })
     .onclose([](
-        crow::websocket::connection&,
+        crow::websocket::connection& conn,
         const std::string&,
         uint16_t
     ) {
+        auto* connection_state_ptr =
+        static_cast<std::shared_ptr<WsSearchConnectionState>*>(
+            conn.userdata()
+        );
+
+        if (connection_state_ptr == nullptr) {
+            return;
+        }
+
+        const auto connection_state = *connection_state_ptr;
+
+        if (connection_state) {
+            {
+                std::lock_guard<std::mutex> lock(connection_state->mutex);
+                connection_state->connection = nullptr;
+            }
+        }
+
+        delete connection_state_ptr;
     })
     .onerror([](
         crow::websocket::connection&,
         const std::string&
-    ) {
-    });
+    ) {});
 
     CROW_WEBSOCKET_ROUTE(app, "/ws/index")
     .onopen([](crow::websocket::connection& conn) {
