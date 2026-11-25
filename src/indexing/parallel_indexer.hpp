@@ -27,7 +27,10 @@ namespace Hallazgo_indexing {
         );
 
         void indexDocuments(const std::vector<Document>& documents);
-        void indexFiles(const std::string& directory);
+        void indexFiles(
+            const std::string& directory,
+            std::size_t max_documents = 0
+        );
         std::size_t getProcessedFiles() const;
         std::size_t getTotalFiles() const;
 

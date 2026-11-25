@@ -310,7 +310,8 @@ SearchExecution performSearch(
 bool startIndexingLocked(
     ApiState& state,
     std::size_t workers,
-    std::string& current_job_id
+    std::string& current_job_id,
+    std::size_t max_documents = 0
 ) {
     {
         std::lock_guard<std::mutex> lock(state.mutex);
@@ -345,9 +346,18 @@ bool startIndexingLocked(
 
     auto* indexer = state.indexer.get();
 
-    state.indexing_thread = std::thread([&state, indexer]() {
-        try {
-            indexer->indexFiles(state.dataset_directory);
+    state.indexing_thread = std::thread(
+        [&state, indexer, max_documents]() {
+            try {
+            const std::filesystem::path dataset_path(state.dataset_directory);
+            const std::filesystem::path train_path = dataset_path / "train";
+
+            const std::filesystem::path indexing_path =
+                std::filesystem::is_directory(train_path)
+                    ? train_path
+                    : dataset_path;
+
+            indexer->indexFiles(indexing_path.string(), max_documents);
 
             std::lock_guard<std::mutex> lock(state.mutex);
 
@@ -516,8 +526,22 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
             );
         }
 
+        if (body.has("max_documents") &&
+            (body["max_documents"].t() != crow::json::type::Number ||
+            body["max_documents"].d() < 0 ||
+            body["max_documents"].d() != body["max_documents"].i())) {
+            return makeErrorResponse(
+                400, "invalid_request", "Invalid max_documents value"
+            );
+        }
+
         const std::size_t workers =
             static_cast<std::size_t>(body["threads"].i());
+
+        const std::size_t max_documents =
+            body.has("max_documents")
+                ? static_cast<std::size_t>(body["max_documents"].i())
+                : 0;
 
         std::string current_job_id;
 
@@ -525,7 +549,9 @@ void registerRoutes(crow::SimpleApp& app, ApiState& state) {
             state.indexing_start_mutex
         );
 
-        if (!startIndexingLocked(state, workers, current_job_id)) {
+        if (!startIndexingLocked(
+                state, workers, current_job_id, max_documents
+            )) {
             return makeErrorResponse(
                 409,
                 "indexing_in_progress",

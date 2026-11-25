@@ -85,13 +85,21 @@ namespace Hallazgo_indexing {
             }
         }
 
-    void ParallelIndexer::indexFiles(const std::string& directory) {
+    void ParallelIndexer::indexFiles(
+        const std::string& directory,
+        std::size_t max_documents
+    ) {
         std::vector<std::filesystem::path> files;
-
         for (const auto& entry : std::filesystem::directory_iterator(directory)) {
             if (entry.is_regular_file() && entry.path().extension() == ".txt") {
                 files.push_back(entry.path());
             }
+        }
+
+        std::sort(files.begin(), files.end());
+
+        if (max_documents > 0 && files.size() > max_documents) {
+            files.resize(max_documents);
         }
 
         if (files.empty()) {
