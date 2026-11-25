@@ -1,45 +1,400 @@
 # Hallazgo
 
-**Short name:** Halla  
-**Full title:** Intelligent Literary Discovery Engine
+Hallazgo — пошукова система для пошуку за ключовими словами в англомовних книгах із набору даних PG-19.
 
-Hallazgo is a C++ literary search system developed for English-language books from the PG-19 dataset. It features parallel document indexing, BM25 relevance scoring, REST API endpoints, WebSocket pipeline streaming, CLI & Web user interfaces and LLM query expansion via Ollama.
+Система реалізує:
 
-## Project Architecture
+- багатопотокову побудову інвертованого індексу з використанням хеш-таблиці
+- пошук документів за ключовими словами з ранжуванням результатів за алгоритмом BM25
+- розширення пошукових запитів за допомогою локальної мовної моделі `qwen2.5:1.5b-instruct` через Ollama
+- синхронний REST API для індексації, пошуку та отримання статистики
+- WebSocket для відображення етапів пошуку та прогресу індексації
+- консольний та вебклієнти
+- Docker Compose для запуску сервера й Ollama
 
-- **C++ Core Engine**: Tokenizer, thread-safe inverted index, custom `ThreadPool`, and `ParallelIndexer`.
-- **Search System**: BM25 keyword search with relevance scoring, document length normalization, and stop-word filtering.
-- **REST & WebSocket API**: Built with Crow, providing `/api/health`, `/api/index`, `/api/search`, `/api/stats`, and `/ws/search`.
-- **LLM Integration**: `OllamaClient` connecting locally to `qwen2.5:1.5b-instruct` for automated query expansion.
-- **Clients**: Interactive Web UI (`clients/web/`) and C++ CLI client (`clients/cli/`).
+### Підготовка даних
 
-## Automated Testing
+Для роботи системи використовується датасет PG-19. Його можна завантажити з [Google Cloud Storage - DeepMind Gutenberg](https://console.cloud.google.com/storage/browser/deepmind-gutenberg;tab=objects?prefix=&forceOnObjectsSortingFiltering=false).
 
-Hallazgo includes a comprehensive unit and integration test suite:
+Для коректної роботи системи необхідно завантажити:
+- папку `train` з текстовими файлами книг (`.txt`);
+- файл `metadata.csv` з метаданими книг.
 
-- **Unit Tests**: Tokenizer, Inverted Index, Search Engine, ThreadPool, Parallel Indexer, Metadata Store.
-- **REST API Integration Tests**: Real HTTP server tests covering health check, index lifecycle, search endpoints, error responses, and 8-client concurrent request handling.
-- **Opt-in LLM Integration Test**: Live query expansion test against a local Ollama instance.
+Структура датасету має виглядати так:
 
-For detailed instructions on building, running, and configuring tests on Windows with CMake and CTest, see [Testing Documentation](docs/testing/testing.md).
+```text
+pg19/
+├── train/
+│   ├── ...
+│   └── *.txt
+└── metadata.csv
+```
 
-## Quick Start (Building and Testing)
+Папку `pg19` потрібно розмістити в папкі `dataset` на одному рівні з папкою проєкту. Docker Compose автоматично підключає її до контейнера за шляхом `/data/pg19` у режимі лише для читання.
+
+
+## Запуск через Docker Compose
+
+Docker Compose використовується для запуску API-сервера та Ollama.
+
+Перед запуском переконайтеся, що Docker Desktop встановлено та запущено, а датасет PG-19 розміщено відповідно до попереднього пункту.
+
+### Запуск сервісів
+
+У кореневій папці проєкту виконайте:
 
 ```powershell
-# Configure CMake build
+docker compose up
+```
+
+### Автоматичне завантаження мовної моделі
+
+Для розширення пошукових запитів використовується локальна мовна модель `qwen2.5:1.5b-instruct`, яка запускається через Ollama.
+
+Під час виконання команди `docker compose up` Docker Compose автоматично:
+
+1. Запускає сервіс Ollama
+2. Очікує готовності Ollama до обробки запитів
+3. Завантажує модель `qwen2.5:1.5b-instruct`, якщо вона ще не доступна
+4. Запускає API після успішного завершення ініціалізації моделі
+
+Завантажена модель зберігається в окремому Docker volume, тому її не потрібно завантажувати повторно після звичайного перезапуску контейнерів.
+
+Розширення запитів є додатковою можливістю: Якщо під час пошукового запиту Ollama стає недоступною або не може повернути результат, система використовує початкові пошукові терміни без розширення.
+
+### Перевірка запуску
+
+Після запуску сервісів перевірити стан API можна за адресою:
+
+```text
+http://localhost:18080/api/health
+```
+
+Вебінтерфейс доступний за адресою:
+
+```text
+http://localhost:18080
+```
+
+Документація API зі Swagger UI:
+
+```text
+http://localhost:18080/docs
+```
+
+### Зупинка сервісів
+
+Для зупинки контейнерів виконайте:
+
+```powershell
+docker compose down
+```
+
+## Використання
+
+### Вебінтерфейс
+
+Відкрийте у браузері:
+
+```text
+http://localhost:18080
+```
+
+Основні можливості інтерфейсу:
+
+1. Вибір кількості робочих потоків для побудови індексу
+3. Запуск індексації документів
+4. Перегляд прогресу індексації
+5. Перегляд статистики побудованого індексу
+6. Введення пошукового запиту та отримання результатів
+7. Перегляд етапів обробки пошукового запиту та знайдених документів
+
+Результати пошуку містять ідентифікатор документа, його назву, оцінку релевантності та короткий текстовий фрагмент.
+
+### Консольний клієнт
+
+Консольний клієнт дозволяє виконувати пошукові запити через командний рядок. Він надсилає запит до REST API та виводить отримані результати, зокрема ідентифікатори документів, оцінки релевантності й текстові фрагменти.
+
+Клієнт підтримує передавання пошукового запиту через аргументи командного рядка або стандартне введення (stdin). За замовчуванням використовується адреса API:
+
+```text
+http://localhost:18080
+```
+
+Для використання клієнта спочатку необхідно запустити сервер та побудувати індекс.
+
+## REST API
+
+Базова адреса REST API:
+
+```text
+http://localhost:18080
+```
+
+Тіла POST-запитів та відповіді мають формат JSON.
+
+### GET /api/health
+
+Перевіряє стан API та доступність Ollama.
+
+Приклад відповіді:
+
+```json
+{
+  "status": "ok",
+  "ollama": true
+}
+```
+
+- `status` — стан API;
+- `ollama` — логічне значення доступності сервісу Ollama.
+
+### POST /api/index
+
+Запускає побудову інвертованого індексу.
+
+Приклад запиту:
+
+```json
+{
+  "threads": 8,
+  "max_documents": 0
+}
+```
+
+Параметри:
+
+- `threads` — обов'язкова кількість робочих потоків, ціле число не менше 1;
+- `max_documents` — необов'язкова максимальна кількість документів для індексації. Значення `0` означає індексацію всіх доступних документів.
+
+Приклад успішної відповіді:
+
+```json
+{
+  "status": "ok",
+  "documents_indexed": 28602,
+  "time_ms": 881092
+}
+```
+
+- `status` — результат виконання операції;
+- `documents_indexed` — кількість проіндексованих документів;
+- `time_ms` — час побудови індексу в мілісекундах.
+
+Запит повертає відповідь після завершення індексації. Якщо індексація вже виконується, сервер повертає помилку HTTP 409.
+
+### POST /api/search
+
+Виконує пошук документів за заданим запитом.
+
+Приклад запиту:
+
+```json
+{
+  "query": "love and friendship",
+  "mode": "keyword"
+}
+```
+
+Параметри:
+
+- `query` — пошуковий рядок;
+- `mode` — режим пошуку. Підтримується значення `keyword`.
+
+Приклад відповіді:
+
+```json
+{
+  "results": [
+    {
+      "doc_id": "123",
+      "title": "Example Book",
+      "score": 0.95,
+      "snippet": "...love and friendship..."
+    }
+  ],
+  "time_ms": 56
+}
+```
+
+`results` — масив знайдених документів, відсортованих за релевантністю. Кожен елемент містить:
+
+- `doc_id` — ідентифікатор документа;
+- `title` — назву книги;
+- `score` — оцінку релевантності;
+- `snippet` — короткий фрагмент тексту документа.
+
+`time_ms` — загальний час обробки пошукового запиту в мілісекундах, включно з розширенням запиту та формуванням результатів.
+
+### GET /api/stats
+
+Повертає статистику побудованого індексу.
+
+Приклад відповіді:
+
+```json
+{
+  "documents": 28602,
+  "index_build_time_ms": 881092,
+  "threads_used": 8
+}
+```
+
+Поля відповіді:
+
+- `documents` — кількість проіндексованих документів;
+- `index_build_time_ms` — час побудови індексу в мілісекундах;
+- `threads_used` — кількість потоків, використаних під час індексації.
+
+Якщо індекс ще не побудовано, відповідні значення можуть дорівнювати нулю.
+
+### Обробка помилок
+
+У разі помилок API повертає відповідний HTTP-статус та JSON-об'єкт такого формату:
+
+```json
+{
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Error description"
+  }
+}
+```
+
+- `code` — код помилки;
+- `message` — текстове пояснення.
+
+Основні випадки помилок:
+
+- `400 Bad Request` — некоректні параметри запиту;
+- `409 Conflict` — індексація вже виконується;
+- `503 Service Unavailable` — індекс ще не готовий до пошуку;
+- `500 Internal Server Error` — внутрішня помилка під час виконання операції.
+
+## WebSocket
+
+Система використовує WebSocket для передавання інформації про перебіг операцій у режимі реального часу.
+
+### WebSocket /ws/index
+
+Адреса:
+
+```text
+ws://localhost:18080/ws/index
+```
+
+WebSocket використовується для отримання прогресу індексації. Після встановлення з'єднання сервер надсилає повідомлення про успішне підключення.
+
+Для отримання поточного стану клієнт надсилає:
+
+```json
+{
+  "action": "progress"
+}
+```
+
+У відповідь сервер передає інформацію про поточну операцію:
+
+- `job_id` — ідентифікатор завдання;
+- `processed_documents` — кількість уже опрацьованих документів;
+- `total_documents` — загальна кількість документів;
+- `progress_percent` — відсоток виконання.
+
+Залежно від стану операції сервер надсилає один із етапів:
+
+- `idle` — індексація не виконується;
+- `indexing_progress` — індексація триває;
+- `done` — індексацію завершено;
+- `error` — під час індексації виникла помилка.
+
+WebSocket також підтримує запуск індексації через повідомлення з параметром `threads`. У вебінтерфейсі запуск індексації виконується через REST API, а WebSocket використовується для отримання прогресу.
+
+### WebSocket /ws/search
+
+Адреса:
+
+```text
+ws://localhost:18080/ws/search
+```
+
+Використовується для передавання етапів обробки пошукового запиту.
+
+Клієнт надсилає JSON-повідомлення:
+
+```json
+{
+  "query": "love and friendship"
+}
+```
+
+Під час успішного виконання пошуку сервер послідовно надсилає повідомлення про такі етапи:
+
+- `search_started` — пошук розпочато;
+- `query_expansion_started` — розпочато підготовку та розширення запиту;
+- `query_expansion` — передавання початкового запиту та отриманих пошукових термінів;
+- `keyword_search_started` — розпочато пошук в інвертованому індексі;
+- `keyword_search` — передавання знайдених документів і часу пошуку;
+- `done` — обробку запиту завершено.
+
+Приклад повідомлення з результатами розширення запиту:
+
+```json
+{
+  "stage": "query_expansion",
+  "data": {
+    "original": "love and friendship",
+    "expanded_terms": ["love", "friendship", "relationships"]
+  }
+}
+```
+
+Приклад повідомлення з результатами пошуку:
+
+```json
+{
+  "stage": "keyword_search",
+  "data": {
+    "results": [],
+    "time_ms": 56
+  }
+}
+```
+
+У разі помилки сервер надсилає повідомлення з етапом `error` та описом проблеми.
+
+## Автоматизоване тестування
+
+Проєкт містить модульні та інтеграційні тести для перевірки основних компонентів системи.
+
+Тестами охоплено:
+
+- токенізатор;
+- інвертований індекс;
+- пошуковий механізм;
+- пул робочих потоків;
+- паралельну індексацію;
+- сховище метаданих;
+- REST API та обробку помилок;
+- одночасні HTTP-запити.
+
+Окремо передбачено інтеграційний тест розширення запитів із використанням запущеного локального сервісу Ollama.
+
+Для збирання проєкту та запуску тестів із використанням CMake і CTest виконайте:
+
+```powershell
 cmake -S . -B build
-
-# Build project and test suite
 cmake --build build --config Release
-
-# Run automated tests with CTest
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-## Running with Docker
+Детальніші інструкції щодо налаштування середовища, залежностей та запуску тестів наведено в документі [docs/testing/testing.md](docs/testing/testing.md).
 
-```powershell
-docker compose up -d --build
-```
-Access the Web UI at `http://localhost:18080`.
+## Бенчмарки
 
+Для оцінювання продуктивності системи передбачено експерименти з:
+
+- часом побудови індексу залежно від кількості робочих потоків;
+- пропускною здатністю пошуку залежно від кількості одночасних клієнтів;
+- середнім часом відповіді та 95-м перцентилем затримки.
+
+Скрипт навантажувального тестування та результати експериментів зберігаються в `benchmark.py` та каталозі `benchmark_results/` відповідно.
