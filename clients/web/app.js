@@ -55,7 +55,9 @@ function isIndexReady(stats) {
     }
 
     const total = Number(stats.total_document_count || 0);
-    const processed = Number(stats.processed_document_count || 0);
+    const processed = Number(
+        stats.processed_document_count || stats.documents || 0
+    );
 
     return total > 0 && processed >= total;
 }
@@ -68,6 +70,7 @@ function isIndexing(status) {
 
 function getDocumentCount(stats) {
     return Number(
+        stats.documents ||
         stats.processed_document_count ||
         stats.total_document_count ||
         0
@@ -93,6 +96,99 @@ function formatIndexTime(milliseconds) {
 
     return `${hours}h ${remainingMinutes}m`;
 }
+
+
+function searchWithWebSocket(query) {
+    return new Promise((resolve, reject) => {
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const socket = new WebSocket(
+            `${protocol}//${window.location.host}/ws/search`
+        );
+
+        let completed = false;
+        let results = [];
+
+        socket.onopen = () => {
+            socket.send(JSON.stringify({ query }));
+        };
+
+        socket.onmessage = (event) => {
+            let message;
+
+            try {
+                message = JSON.parse(event.data);
+            } catch {
+                socket.close();
+                reject(new Error("Invalid WebSocket response"));
+                return;
+            }
+
+            switch (message.stage) {
+                case "query_expansion": {
+                    const terms = message.data?.expanded_terms || [];
+                    const stage = document.createElement("p");
+
+                    stage.textContent =
+                        `Query expansion: ${terms.join(", ")}`;
+
+                    statusElement.append(stage);
+                    break;
+                }
+
+                case "keyword_search": {
+                    results = message.data?.results || [];
+
+                    const stage = document.createElement("p");
+                    const time = message.data?.time_ms ?? 0;
+
+                    stage.textContent =
+                        `Keyword search completed in ${time} ms.`;
+
+                    statusElement.append(stage);
+                    break;
+                }
+
+                case "done": {
+                    completed = true;
+
+                    const stage = document.createElement("p");
+                    stage.textContent = "Search completed.";
+
+                    statusElement.append(stage);
+
+                    socket.close();
+                    resolve(results);
+                    break;
+                }
+
+                case "error": {
+                    completed = true;
+                    socket.close();
+
+                    reject(new Error(
+                        message.data?.message || "WebSocket search failed"
+                    ));
+                    break;
+                }
+            }
+        };
+
+        socket.onerror = () => {
+            if (!completed) {
+                completed = true;
+                reject(new Error("Could not connect to the search WebSocket"));
+            }
+        };
+
+        socket.onclose = () => {
+            if (!completed) {
+                completed = true;
+                reject(new Error("WebSocket connection closed unexpectedly"));
+            }
+        };
+    });
+}
+
 
 function setThreadControlsDisabled(disabled) {
     threadOptions.querySelectorAll("button").forEach(button => {
@@ -148,7 +244,7 @@ function showReadyState(stats) {
 
     const count = getDocumentCount(stats);
     const buildTime = Number(stats.index_build_time_ms);
-    const threads = Number(stats.thread_count || selectedThreads);
+    const threads = Number(stats.threads_used || stats.thread_count || selectedThreads);
 
     let statusText =
         `Index ready · ${count.toLocaleString()} documents indexed`;
@@ -347,6 +443,133 @@ async function startIndexing() {
     }
 }
 
+function startIndexingWithWebSocket() {
+    if (indexState === "indexing") {
+        return;
+    }
+
+    clearIndexError();
+    showIndexingState();
+
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const socket = new WebSocket(
+        `${protocol}//${window.location.host}/ws/index`
+    );
+
+    let progressTimer = null;
+    let completed = false;
+
+    function finish() {
+        if (progressTimer !== null) {
+            clearInterval(progressTimer);
+            progressTimer = null;
+        }
+
+        socket.close();
+    }
+
+    socket.onopen = () => {
+        socket.send(JSON.stringify({ threads: selectedThreads }));
+    };
+
+    socket.onmessage = async (event) => {
+        let message;
+
+        try {
+            message = JSON.parse(event.data);
+        } catch {
+            finish();
+            showUnindexedState("Invalid response from indexing server.");
+            return;
+        }
+
+        switch (message.stage) {
+            case "indexing_started":
+                indexProgressText.textContent =
+                    `Indexing documents: 0 / 0 (${selectedThreads} threads)...`;
+
+                // Запитуємо актуальний прогрес щосекунди.
+                progressTimer = setInterval(() => {
+                    if (socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({ action: "progress" }));
+                    }
+                }, 1000);
+
+                // Отримуємо перший стан одразу.
+                socket.send(JSON.stringify({ action: "progress" }));
+                break;
+
+            case "indexing_progress": {
+                if (progressTimer === null) {
+                    progressTimer = setInterval(() => {
+                        if (socket.readyState === WebSocket.OPEN) {
+                            socket.send(JSON.stringify({ action: "progress" }));
+                        }
+                    }, 1000);
+                }
+
+                const processed =
+                    Number(message.data?.processed_documents || 0);
+                const total =
+                    Number(message.data?.total_documents || 0);
+                const percent =
+                    Number(message.data?.progress_percent || 0);
+
+                indexProgressText.textContent =
+                    `Indexing documents: ${processed.toLocaleString()} / ${total.toLocaleString()} (${selectedThreads} threads) · ${percent}%`;
+
+                break;
+            }
+
+            case "done":
+                completed = true;
+                finish();
+
+                try {
+                    const stats = await fetchStats();
+                    showReadyState(stats);
+                } catch {
+                    showReadyState({
+                        documents: message.data?.processed_documents || 0,
+                        index_build_time_ms: message.data?.time_ms || 0,
+                        threads_used: selectedThreads
+                    });
+                }
+                break;
+
+            case "error":
+                completed = true;
+                finish();
+                showUnindexedState(
+                    message.data?.message || "Indexing failed."
+                );
+                break;
+        }
+    };
+
+    socket.onerror = () => {
+        if (!completed) {
+            completed = true;
+            finish();
+            showUnindexedState(
+                "Could not connect to the indexing WebSocket."
+            );
+        }
+    };
+
+    socket.onclose = () => {
+        if (!completed) {
+            completed = true;
+
+            if (indexState === "indexing") {
+                showUnindexedState(
+                    "Indexing connection closed unexpectedly."
+                );
+            }
+        }
+    };
+}
+
 function prepareRebuild() {
     // Return to the home page and clear previous search results.
     showHome();
@@ -403,19 +626,19 @@ function showHome() {
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
+
 function createBookCard(item, index) {
     const card = document.createElement("article");
     card.className = "result-card";
     card.style.animationDelay = `${index * 50}ms`;
 
+    const documentIdValue = item.doc_id || item.document_id || "unknown";
+
     const cover = document.createElement("div");
     cover.className = "book-cover";
 
     const placeholder = document.createElement("div");
-
-    const coverVariant = Math.abs(
-        Number(item.document_id) || index
-    ) % 10;
+    const coverVariant = Math.abs(Number(documentIdValue) || index) % 10;
 
     const symbols = [
         "✦", "❧", "☾", "❋", "◈",
@@ -429,11 +652,12 @@ function createBookCard(item, index) {
     symbol.textContent = symbols[coverVariant];
 
     placeholder.append(symbol);
+    cover.replaceChildren(placeholder);
 
     const image = document.createElement("img");
     image.src =
-        `https://www.gutenberg.org/cache/epub/${encodeURIComponent(item.document_id)}/${encodeURIComponent(`pg${item.document_id}.cover.medium.jpg`)}`;
-    image.alt = `Cover of ${item.title || "book"}`;
+        `https://www.gutenberg.org/cache/epub/${encodeURIComponent(documentIdValue)}/${encodeURIComponent(`pg${documentIdValue}.cover.medium.jpg`)}`;
+    image.alt = `Cover of document ${documentIdValue}`;
     image.loading = "lazy";
 
     image.addEventListener("error", () => {
@@ -444,17 +668,15 @@ function createBookCard(item, index) {
         cover.replaceChildren(image);
     }, { once: true });
 
-    cover.replaceChildren(placeholder);
-
     const info = document.createElement("div");
     info.className = "book-info";
 
     const title = document.createElement("h3");
-    title.textContent = item.title || "Untitled";
+    title.textContent = item.title || `Document ${documentIdValue}`;
 
     const documentId = document.createElement("p");
     documentId.className = "book-id";
-    documentId.textContent = `DOCUMENT ID · ${item.document_id}`;
+    documentId.textContent = `DOCUMENT ID · ${documentIdValue}`;
 
     const score = document.createElement("p");
     score.className = "book-score";
@@ -464,125 +686,16 @@ function createBookCard(item, index) {
         ? `BM25 relevance · ${numericScore.toFixed(3)}`
         : "BM25 search result";
 
-    info.append(title, documentId, score);
+    const snippet = document.createElement("p");
+    snippet.className = "book-snippet";
+    snippet.textContent = item.snippet || "No preview available.";
+
+    info.append(title, documentId, score, snippet);
     card.append(cover, info);
 
     return card;
 }
 
-form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-
-    const query = queryInput.value.trim();
-
-    if (!query) {
-        statusElement.textContent = "Please enter a search query.";
-        return;
-    }
-
-    if (indexState !== "ready") {
-        statusElement.textContent =
-            "The search index is not ready yet. Please build it first.";
-        return;
-    }
-
-    document.body.classList.add("has-results");
-
-    moveSearchToCompactHeader();
-
-    resultsSection.hidden = false;
-
-    searchButton.disabled = true;
-    searchButton.textContent = "Searching...";
-
-    statusElement.textContent =
-        "Searching the collection and expanding your query...";
-
-    resultCount.textContent = "";
-    resultsContainer.replaceChildren();
-
-    try {
-        const response = await fetch("/api/search", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                query: query,
-                mode: "keyword"
-            })
-        });
-
-        const data = await response.json();
-
-        if (!response.ok) {
-            throw new Error(
-                data.error?.message || `Request failed: ${response.status}`
-            );
-        }
-
-        const results = data.results || [];
-
-        resultCount.textContent = `${results.length} books`;
-
-        if (results.length === 0) {
-            statusElement.textContent = "";
-
-            const emptyMessage = document.createElement("div");
-            emptyMessage.className = "empty-state";
-            emptyMessage.textContent =
-                "No stories found. Try another search.";
-
-            resultsContainer.append(emptyMessage);
-            return;
-        }
-
-        results.forEach((item, index) => {
-            resultsContainer.append(createBookCard(item, index));
-        });
-
-        if (data.query_expansion_used && data.added_terms?.length > 0) {
-            const toggle = document.createElement("button");
-            toggle.type = "button";
-            toggle.className = "text-button expansion-toggle";
-            toggle.textContent =
-                `Query expanded · ${data.added_terms.length} additional terms`;
-
-            const termsList = document.createElement("div");
-            termsList.className = "expanded-terms";
-            termsList.hidden = true;
-
-            const termsHeading = document.createElement("p");
-            termsHeading.textContent = "Additional search terms:";
-            termsList.append(termsHeading);
-
-            const terms = document.createElement("ul");
-
-            data.added_terms.forEach(term => {
-                const item = document.createElement("li");
-                item.textContent = term;
-                terms.append(item);
-            });
-
-            termsList.append(terms);
-
-            toggle.addEventListener("click", () => {
-                termsList.hidden = !termsList.hidden;
-            });
-
-            statusElement.replaceChildren(toggle, termsList);
-        } else {
-            statusElement.textContent = "Search completed.";
-        }
-
-    } catch (error) {
-        statusElement.textContent =
-            `Something went wrong: ${error.message}`;
-    } finally {
-        searchButton.disabled = false;
-        searchButton.textContent = "Search";
-    }
-});
 
 threadOptions.addEventListener("click", (event) => {
     const button = event.target.closest("[data-threads]");
@@ -594,7 +707,7 @@ threadOptions.addEventListener("click", (event) => {
     selectThreadCount(Number(button.dataset.threads));
 });
 
-buildIndexButton.addEventListener("click", startIndexing);
+buildIndexButton.addEventListener("click", startIndexingWithWebSocket);
 
 rebuildIndexButton.addEventListener("click", prepareRebuild);
 
@@ -622,6 +735,72 @@ quickQueries.addEventListener("click", (event) => {
 
 queryInput.addEventListener("input", () => {
     clearQueryButton.hidden = queryInput.value.length === 0;
+});
+
+
+form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    const query = queryInput.value.trim();
+
+    if (!query) {
+        statusElement.textContent = "Please enter a search query.";
+        return;
+    }
+
+    if (indexState !== "ready") {
+        statusElement.textContent =
+            "The search index is not ready yet. Please build it first.";
+        return;
+    }
+
+    document.body.classList.add("has-results");
+    moveSearchToCompactHeader();
+
+    resultsSection.hidden = false;
+
+    searchButton.disabled = true;
+    searchButton.textContent = "Searching...";
+
+    statusElement.replaceChildren();
+
+    const initialStatus = document.createElement("p");
+    initialStatus.textContent = "Connecting to search...";
+    statusElement.append(initialStatus);
+
+    resultCount.textContent = "";
+    resultsContainer.replaceChildren();
+
+    try {
+        const results = await searchWithWebSocket(query);
+
+        resultCount.textContent = `${results.length} books`;
+
+        if (results.length === 0) {
+            const emptyMessage = document.createElement("div");
+            emptyMessage.className = "empty-state";
+            emptyMessage.textContent =
+                "No stories found. Try another search.";
+
+            resultsContainer.append(emptyMessage);
+            return;
+        }
+
+        results.forEach((item, index) => {
+            resultsContainer.append(createBookCard(item, index));
+        });
+
+    } catch (error) {
+        statusElement.replaceChildren();
+
+        const errorMessage = document.createElement("p");
+        errorMessage.textContent = `Something went wrong: ${error.message}`;
+        statusElement.append(errorMessage);
+
+    } finally {
+        searchButton.disabled = false;
+        searchButton.textContent = "Search";
+    }
 });
 
 // Check the actual index state when the page opens.

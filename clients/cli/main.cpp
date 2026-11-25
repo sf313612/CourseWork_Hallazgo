@@ -1,3 +1,4 @@
+
 #include <iostream>
 #include <string>
 
@@ -65,21 +66,21 @@ int main(int argc, char* argv[]) {
     int number = 1;
 
     for (const auto& item : results) {
-        std::string title = item["title"].s();
-        std::string document_id = item["document_id"].s();
+        std::cout << number++ << ". Document ID: "
+                  << item["doc_id"].s() << "\n";
 
-        std::cout << number++ << ". " << title << "\n";
-        std::cout << "   Document ID: " << document_id << "\n";
         std::cout << "   Score: "
-            << crow::json::wvalue(item["score"]).dump()
-            << "\n\n";
+                  << crow::json::wvalue(item["score"]).dump()
+                  << "\n";
+
+        std::cout << "   Snippet: "
+                  << item["snippet"].s() << "\n\n";
     }
 
-    if (result.has("query_expansion_used")) {
-        std::cout << "Query expansion: "
-                  << (result["query_expansion_used"].b()
-                      ? "used" : "not used")
-                  << "\n";
+    if (result.has("time_ms")) {
+        std::cout << "Search time: "
+                  << crow::json::wvalue(result["time_ms"]).dump()
+                  << " ms\n";
     }
 
     return 0;
