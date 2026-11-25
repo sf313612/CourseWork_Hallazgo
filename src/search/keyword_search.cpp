@@ -4,8 +4,29 @@
 #include <cmath>
 #include <unordered_set>
 #include <limits>
+#include <stdexcept>
 
 namespace Hallazgo_search {
+
+    void KeywordSearch::clear() {
+        std::lock_guard<std::mutex> lock(mutex);
+
+        if (indexing_in_progress) {
+            throw std::logic_error("Cannot clear index while indexing is in progress");
+        }
+
+        index.clear();
+
+        document_ids.clear();
+        document_lengths.clear();
+        document_id_map.clear();
+        pending_document_ids.clear();
+
+        total_documents = 0;
+        total_document_length = 0;
+
+        index_ready = false;
+    }
 
     void KeywordSearch::beginIndexing() {
         std::lock_guard<std::mutex> lock(mutex);

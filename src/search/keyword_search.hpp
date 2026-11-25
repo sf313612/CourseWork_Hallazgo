@@ -19,6 +19,7 @@ namespace Hallazgo_search {
 
     class KeywordSearch {
     public:
+        void clear();
         void beginIndexing();
         bool isReady();
         void finishIndexing(bool successful = true);

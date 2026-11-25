@@ -21,6 +21,7 @@ namespace Hallazgo_inverted_index {
 
     class InvertedIndex {
     public:
+        void clear();
         void addDocument(
             std::uint32_t doc_id,
             const std::vector<std::string>& tokens

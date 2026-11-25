@@ -324,6 +324,9 @@ bool startIndexingLocked(
         state.indexing_thread.join();
     }
 
+    // Clear the previous index before starting a new indexing job.
+    state.search.clear();
+
     std::lock_guard<std::mutex> lock(state.mutex);
 
     state.indexer = std::make_unique<Hallazgo_indexing::ParallelIndexer>(

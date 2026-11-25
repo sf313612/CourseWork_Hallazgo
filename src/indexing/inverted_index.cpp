@@ -8,6 +8,15 @@
 
 namespace Hallazgo_inverted_index {
 
+    void InvertedIndex::clear() {
+        for (auto& bucket : buckets) {
+            std::lock_guard<std::mutex> lock(bucket.mutex);
+
+            bucket.entries.clear();
+            bucket.lookup_slots.clear();
+        }
+    }
+    
     bool InvertedIndex::findEntryIndex(
         const Bucket& bucket,
         const std::string& term,
