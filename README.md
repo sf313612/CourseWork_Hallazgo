@@ -12,6 +12,21 @@ Hallazgo — пошукова система для пошуку за ключо
 - консольний та вебклієнти
 - Docker Compose для запуску сервера й Ollama
 
+## User Interface
+
+### Web Interface
+![Main interface](docs/design/MainInterface.png)
+
+### Indexing Progress
+![Indexing progress](docs/design/IndexingProgress.png)
+
+### Query Processing
+![Query processing](docs/design/QueryProcessing.png)
+
+### Search Results
+![Search results](docs/design/SearchResults.png)
+
+
 ### Підготовка даних
 
 Для роботи системи використовується датасет PG-19. Його можна завантажити з [Google Cloud Storage - DeepMind Gutenberg](https://console.cloud.google.com/storage/browser/deepmind-gutenberg;tab=objects?prefix=&forceOnObjectsSortingFiltering=false).
@@ -271,21 +286,48 @@ http://localhost:18080
 - `503 Service Unavailable` — індекс ще не готовий до пошуку;
 - `500 Internal Server Error` — внутрішня помилка під час виконання операції.
 
-## WebSocket
+### WebSocket API
 
-Система використовує WebSocket для передавання інформації про перебіг операцій у режимі реального часу.
+Система підтримує два WebSocket-ендпоінти: `/ws/index` для керування індексацією та отримання її прогресу і `/ws/search` для отримання етапів обробки пошукового запиту.
 
-### WebSocket /ws/index
+#### `/ws/index`
 
-Адреса:
+Після встановлення з'єднання сервер надсилає початкове повідомлення:
 
-```text
-ws://localhost:18080/ws/index
+```json
+{
+  "type": "connected",
+  "message": "Index WebSocket connection established"
+}
 ```
 
-WebSocket використовується для отримання прогресу індексації. Після встановлення з'єднання сервер надсилає повідомлення про успішне підключення.
+**Запуск індексації**
 
-Для отримання поточного стану клієнт надсилає:
+Для запуску індексації клієнт надсилає кількість потоків:
+
+```json
+{
+  "threads": 4
+}
+```
+
+У разі успішного запуску сервер повертає:
+
+```json
+{
+  "stage": "indexing_started",
+  "data": {
+    "job_id": "job-1",
+    "threads": 4
+  }
+}
+```
+
+`job_id` — рядок з ідентифікатором завдання, `threads` — ціле число.
+
+**Запит поточного прогресу**
+
+Для отримання поточного стану індексації клієнт надсилає:
 
 ```json
 {
@@ -293,74 +335,215 @@ WebSocket використовується для отримання прогр�
 }
 ```
 
-У відповідь сервер передає інформацію про поточну операцію:
-
-- `job_id` — ідентифікатор завдання;
-- `processed_documents` — кількість уже опрацьованих документів;
-- `total_documents` — загальна кількість документів;
-- `progress_percent` — відсоток виконання.
-
-Залежно від стану операції сервер надсилає один із етапів:
-
-- `idle` — індексація не виконується;
-- `indexing_progress` — індексація триває;
-- `done` — індексацію завершено;
-- `error` — під час індексації виникла помилка.
-
-WebSocket також підтримує запуск індексації через повідомлення з параметром `threads`. У вебінтерфейсі запуск індексації виконується через REST API, а WebSocket використовується для отримання прогресу.
-
-### WebSocket /ws/search
-
-Адреса:
-
-```text
-ws://localhost:18080/ws/search
-```
-
-Використовується для передавання етапів обробки пошукового запиту.
-
-Клієнт надсилає JSON-повідомлення:
+Під час виконання індексації сервер повертає:
 
 ```json
 {
-  "query": "love and friendship"
+  "stage": "indexing_progress",
+  "data": {
+    "job_id": "job-1",
+    "processed_documents": 1200,
+    "total_documents": 28602,
+    "progress_percent": 4
+  }
 }
 ```
 
-Під час успішного виконання пошуку сервер послідовно надсилає повідомлення про такі етапи:
+Поля `processed_documents`, `total_documents` і `progress_percent` мають числовий тип.
 
-- `search_started` — пошук розпочато;
-- `query_expansion_started` — розпочато підготовку та розширення запиту;
-- `query_expansion` — передавання початкового запиту та отриманих пошукових термінів;
-- `keyword_search_started` — розпочато пошук в інвертованому індексі;
-- `keyword_search` — передавання знайдених документів і часу пошуку;
-- `done` — обробку запиту завершено.
+Після завершення індексації надсилається повідомлення:
 
-Приклад повідомлення з результатами розширення запиту:
+```json
+{
+  "stage": "done",
+  "data": {
+    "job_id": "job-1",
+    "processed_documents": 28602,
+    "total_documents": 28602,
+    "progress_percent": 100,
+    "time_ms": 881092
+  }
+}
+```
+
+У разі помилки:
+
+```json
+{
+  "stage": "error",
+  "data": {
+    "job_id": "job-1",
+    "processed_documents": 1200,
+    "total_documents": 28602,
+    "progress_percent": 4,
+    "message": "Indexing error message"
+  }
+}
+```
+
+Якщо індексація ще не запускалася або немає активного чи завершеного завдання, сервер повертає:
+
+```json
+{
+  "stage": "idle",
+  "data": {
+    "job_id": "",
+    "processed_documents": 0,
+    "total_documents": 0,
+    "progress_percent": 0
+  }
+}
+```
+
+У повідомленнях про помилку поле `message` містить текст помилки. Якщо індексація ще не завершена, повідомлення `indexing_progress` надсилається замість `done` або `error`.
+
+#### `/ws/search`
+
+Для виконання пошуку клієнт надсилає JSON-повідомлення з текстом запиту:
+
+```json
+{
+  "query": "war and conflict"
+}
+```
+
+Сервер послідовно надсилає повідомлення про етапи обробки запиту.
+
+**1. Початок пошуку**
+
+```json
+{
+  "stage": "search_started"
+}
+```
+
+**2. Початок розширення запиту**
+
+```json
+{
+  "stage": "query_expansion_started"
+}
+```
+
+**3. Результат розширення запиту**
 
 ```json
 {
   "stage": "query_expansion",
   "data": {
-    "original": "love and friendship",
-    "expanded_terms": ["love", "friendship", "relationships"]
+    "original": "war and conflict",
+    "expanded_terms": [
+      "war",
+      "and",
+      "conflict",
+      "battle",
+      "warfare"
+    ]
   }
 }
 ```
 
-Приклад повідомлення з результатами пошуку:
+`original` — початковий запит (рядок), `expanded_terms` — масив рядків із пошуковими термінами.
+
+**4. Початок пошуку в індексі**
+
+```json
+{
+  "stage": "keyword_search_started"
+}
+```
+
+**5. Результати пошуку**
 
 ```json
 {
   "stage": "keyword_search",
   "data": {
-    "results": [],
-    "time_ms": 56
+    "results": [
+      {
+        "doc_id": "12345",
+        "title": "Example Book",
+        "score": 8.52,
+        "snippet": "...example text from the document..."
+      }
+    ],
+    "time_ms": 15
   }
 }
 ```
 
-У разі помилки сервер надсилає повідомлення з етапом `error` та описом проблеми.
+`results` — масив знайдених документів. Кожен елемент містить:
+- `doc_id` — ідентифікатор документа (рядок);
+- `title` — назву документа (рядок);
+- `score` — оцінку релевантності (число);
+- `snippet` — текстовий фрагмент документа (рядок).
+
+`time_ms` — ціле число, що позначає час виконання саме пошуку в індексі в мілісекундах.
+
+**6. Завершення пошуку**
+
+```json
+{
+  "stage": "done"
+}
+```
+
+**7. Повідомлення про помилку**
+
+```json
+{
+  "stage": "error",
+  "data": {
+    "message": "Index is not ready"
+  }
+}
+```
+
+Поле `message` має рядковий тип і містить опис помилки. Воно також використовується для повідомлення про некоректний запит або інші помилки виконання пошуку.
+
+**Примітка щодо часу виконання:** поле `time_ms` у повідомленні WebSocket `keyword_search` показує лише час пошуку за індексом. Натомість `time_ms` у відповіді REST-ендпоінта `POST /api/search` відображає загальний час обробки запиту, включно з розширенням запиту та формуванням результатів пошуку.
+
+### CLI — приклади використання
+
+Консольний клієнт `hallazgo_cli` підтримує два способи введення пошукового запиту.
+
+**1. Передавання запиту через аргументи командного рядка**
+
+```powershell
+.\build-crow\Release\hallazgo_cli.exe "family relationships"
+```
+
+**2. Введення запиту через стандартний потік введення (`stdin`)**
+
+Якщо запустити клієнт без аргументів, він запропонує ввести запит:
+
+```powershell
+.\build-crow\Release\hallazgo_cli.exe
+```
+
+```text
+Enter search query: family relationships
+```
+
+**Приклад результату виконання**
+
+```text
+Searching for: family relationships
+
+Found 2 results:
+
+1. Document ID: 12345
+   Score: 27.794
+   Snippet: ...example text from the document...
+
+2. Document ID: 67890
+   Score: 26.608
+   Snippet: ...another example text from the document...
+
+Search time: 125 ms
+```
+
+Значення в прикладі наведені для демонстрації формату виведення. Клієнт відображає ідентифікатор документа, оцінку релевантності, текстовий фрагмент і час пошуку. Назва книги у виведенні CLI не відображається.
 
 ## Автоматизоване тестування
 
